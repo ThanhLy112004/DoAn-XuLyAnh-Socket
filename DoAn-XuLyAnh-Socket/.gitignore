@@ -1,0 +1,12 @@
+# Bỏ qua các file biên dịch
+*.class
+bin/
+target/
+
+# Bỏ qua cấu hình của các IDE
+.vscode/
+.idea/
+*.iml
+.project
+.classpath
+.settings/
