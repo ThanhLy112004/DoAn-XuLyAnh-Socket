@@ -1,4 +1,6 @@
 package client;
+
+import share.Constants; // Import file cấu hình chung
 import javax.swing.*;
 import java.awt.*;
 import java.awt.image.BufferedImage;
@@ -20,7 +22,7 @@ public class ClientUI extends JFrame {
         JPanel panelTop = new JPanel();
         btnChoose = new JButton("Chọn Ảnh");
         
-        // Danh sách chức năng (Mã 1 đến 7)
+        // Danh sách chức năng hiển thị cho người dùng
         String[] functions = {"1. Nén ảnh", "2. Phóng to", "3. Thu nhỏ", "4. Xoay ảnh", "5. Đen trắng", "6. Đảo màu", "7. Làm mờ"};
         cbFunctions = new JComboBox<>(functions);
         
@@ -36,11 +38,9 @@ public class ClientUI extends JFrame {
         // --- PHẦN GIỮA: HIỂN THỊ ẢNH ---
         JPanel panelImages = new JPanel(new GridLayout(1, 2, 10, 0));
         
-        // Khung ảnh gốc
         lblOriginal = new JLabel("Ảnh gốc sẽ hiện ở đây", SwingConstants.CENTER);
         lblOriginal.setBorder(BorderFactory.createLineBorder(Color.GRAY));
         
-        // Khung ảnh kết quả
         lblResult = new JLabel("Ảnh kết quả sẽ hiện ở đây", SwingConstants.CENTER);
         lblResult.setBorder(BorderFactory.createLineBorder(Color.RED));
 
@@ -59,11 +59,11 @@ public class ClientUI extends JFrame {
             int result = fileChooser.showOpenDialog(this);
             if (result == JFileChooser.APPROVE_OPTION) {
                 selectedFile = fileChooser.getSelectedFile();
-                // Hiển thị ảnh lên khung bên trái (Scale cho vừa khung)
+                // Hiển thị ảnh (Scale cho vừa khung 400x400)
                 ImageIcon icon = new ImageIcon(new ImageIcon(selectedFile.getAbsolutePath()).getImage().getScaledInstance(400, 400, Image.SCALE_SMOOTH));
                 lblOriginal.setIcon(icon);
                 lblOriginal.setText("");
-                btnSend.setEnabled(true); // Mở khóa nút Gửi
+                btnSend.setEnabled(true); 
                 lblResult.setIcon(null);
                 lblResult.setText("Sẵn sàng gửi...");
             }
@@ -73,18 +73,30 @@ public class ClientUI extends JFrame {
         btnSend.addActionListener(e -> {
             if (selectedFile == null) return;
 
-            // Lấy mã lệnh từ ComboBox (index bắt đầu từ 0 nên cộng 1)
-            int commandCode = cbFunctions.getSelectedIndex() + 1;
+            // Ánh xạ vị trí người dùng chọn trên ComboBox với Mã lệnh chuẩn trong Constants
+            int[] commandMap = {
+                Constants.CMD_COMPRESS,  // 0
+                Constants.CMD_ZOOM_IN,   // 1
+                Constants.CMD_ZOOM_OUT,  // 2
+                Constants.CMD_ROTATE,    // 3
+                Constants.CMD_GRAYSCALE, // 4
+                Constants.CMD_INVERT,    // 5
+                Constants.CMD_BLUR       // 6
+            };
+            
+            // Lấy ra mã lệnh tương ứng
+            int commandCode = commandMap[cbFunctions.getSelectedIndex()];
+            
             lblResult.setText("Đang gửi và chờ Server xử lý...");
-            btnSend.setEnabled(false); // Khóa nút trong lúc chờ
+            btnSend.setEnabled(false); // Khóa nút trong lúc chờ mạng
 
-            // Dùng Thread (Luồng phụ) để giao diện không bị đơ khi chờ mạng
+            // Dùng Thread để giao diện không bị đơ
             new Thread(() -> {
                 try {
-                    // Gọi hàm bên class ImageClient
+                    // Gọi hàm gửi ảnh qua mạng
                     BufferedImage resultImage = ImageClient.sendAndReceiveImage(selectedFile, commandCode);
                     
-                    // Hiển thị kết quả (Cập nhật UI phải chạy trên luồng chính)
+                    // Cập nhật giao diện khi có ảnh trả về
                     SwingUtilities.invokeLater(() -> {
                         ImageIcon resultIcon = new ImageIcon(resultImage.getScaledInstance(400, 400, Image.SCALE_SMOOTH));
                         lblResult.setIcon(resultIcon);
@@ -92,20 +104,19 @@ public class ClientUI extends JFrame {
                         btnSend.setEnabled(true);
                     });
                 } catch (Exception ex) {
+                    // Xử lý khi có lỗi (ví dụ Server chưa bật)
                     SwingUtilities.invokeLater(() -> {
-                        lblResult.setText("Lỗi kết nối Server!");
+                        lblResult.setText("Lỗi kết nối Server! (Server đã bật chưa?)");
                         lblResult.setIcon(null);
                         btnSend.setEnabled(true);
-                        ex.printStackTrace();
+                        System.out.println("Lỗi mạng: " + ex.getMessage());
                     });
                 }
             }).start();
         });
     }
 
-    // Hàm Main để chạy chương trình
     public static void main(String[] args) {
-        // Chạy giao diện an toàn
         SwingUtilities.invokeLater(() -> {
             ClientUI ui = new ClientUI();
             ui.setVisible(true);

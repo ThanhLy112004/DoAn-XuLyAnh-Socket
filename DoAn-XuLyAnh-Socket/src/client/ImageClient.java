@@ -1,26 +1,27 @@
 package client;
+
+import share.Constants; // Import file cấu hình chung
 import java.awt.image.BufferedImage;
 import java.io.*;
 import java.net.Socket;
 import javax.imageio.ImageIO;
 
 public class ImageClient {
-    // Địa chỉ IP và Port của Server (Người 2 làm)
-    private static final String SERVER_IP = "127.0.0.1"; // localhost để test trên cùng 1 máy
-    private static final int PORT = 5000;
 
-    // Hàm này nhận vào File ảnh và Mã lệnh, trả về Ảnh đã xử lý
+    // Hàm này nhận vào File ảnh và Mã lệnh, trả về Ảnh đã xử lý từ Server
     public static BufferedImage sendAndReceiveImage(File imageFile, int commandCode) throws Exception {
-        try (Socket socket = new Socket(SERVER_IP, PORT);
+        
+        // Tạo kết nối bằng IP và Port lấy từ file Constants dùng chung
+        try (Socket socket = new Socket(Constants.SERVER_IP, Constants.SERVER_PORT);
              DataOutputStream dos = new DataOutputStream(socket.getOutputStream());
              DataInputStream dis = new DataInputStream(socket.getInputStream())) {
 
-            // 1. Chuyển file ảnh thành mảng byte[] (imageData)
+            // 1. Đọc file ảnh và băm thành mảng byte[]
             BufferedImage img = ImageIO.read(imageFile);
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            // Lấy đuôi file (jpg, png) để ghi cho chuẩn
-            String format = imageFile.getName().substring(imageFile.getName().lastIndexOf(".") + 1);
-            ImageIO.write(img, format, baos);
+            
+            // Ép tất cả ảnh thành định dạng "png" trước khi truyền để tránh lỗi file không đuôi
+            ImageIO.write(img, "png", baos); 
             byte[] imageData = baos.toByteArray();
 
             // ================= GIAI ĐOẠN GỬI =================
@@ -36,14 +37,14 @@ public class ImageClient {
             System.out.println("Đã gửi gói tin: Lệnh " + commandCode + ", Kích thước: " + imageData.length + " bytes.");
 
             // ================= GIAI ĐOẠN NHẬN =================
-            // 5. Đứng đợi nhận 4 byte đầu tiên để biết độ dài ảnh trả về
+            // 5. Đợi nhận 4 byte đầu tiên để biết độ dài ảnh trả về
             int resultLength = dis.readInt();
             byte[] resultData = new byte[resultLength];
             
             // 6. Đọc đủ số byte dữ liệu ảnh
             dis.readFully(resultData);
             
-            // 7. Chuyển mảng byte ngược lại thành BufferedImage để hiển thị
+            // 7. Chuyển mảng byte ngược lại thành BufferedImage để trả về UI
             ByteArrayInputStream bais = new ByteArrayInputStream(resultData);
             BufferedImage resultImage = ImageIO.read(bais);
 
