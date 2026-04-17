@@ -271,7 +271,7 @@ public class ImageProcessor {
             ImageIO.write(vintage, "png", new File(outDir, "vintage_" + src.getName() + ".png"));
             ImageIO.write(sketch, "png", new File(outDir, "sketch_" + src.getName() + ".png"));
 
-            System.out.println("Wrote outputs to test_images/output. Hãy mở ra xem độ WOW nhé!");
+            System.out.println("Wrote outputs to test_images/output");
         } catch (IOException e) {
             e.printStackTrace();
         }
