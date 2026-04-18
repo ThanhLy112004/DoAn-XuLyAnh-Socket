@@ -1,16 +1,23 @@
 package share;
 
 public class Constants {
-    // Cấu hình mạng
-    public static final String SERVER_IP = "127.0.0.1";
-    public static final int SERVER_PORT = 8888; // Hoặc cổng nào nhóm bạn đã chốt
-
-    // Mã lệnh xử lý ảnh (Khớp với 7 chức năng trên UI)
-    public static final int CMD_COMPRESS = 1;   // Nén ảnh
-    public static final int CMD_ZOOM_IN = 2;    // Phóng to
-    public static final int CMD_ZOOM_OUT = 3;   // Thu nhỏ
-    public static final int CMD_ROTATE = 4;     // Xoay ảnh
-    public static final int CMD_GRAYSCALE = 5;  // Đen trắng
-    public static final int CMD_INVERT = 6;     // Đảo màu
-    public static final int CMD_BLUR = 7;       // Làm mờ
+    public static final String SERVER_IP = "127.0.0.1"; // Sẽ đổi ở Bước 4
+    public static final int SERVER_PORT_TCP = 8888;
+    public static final int SERVER_PORT_UDP = 8889;
+    
+    // Giới hạn an toàn của gói tin UDP (khoảng 16KB)
+    public static final int UDP_CHUNK_SIZE = 16384; 
+    // Tỉ lệ cố tình làm rớt gói tin để Demo (0.05 = rớt 5%)
+public static final double SIMULATE_DROP_RATE = 0.05;
+    // Mã lệnh
+    public static final int CMD_COMPRESS = 1;
+    public static final int CMD_ZOOM_IN = 2;
+    public static final int CMD_ZOOM_OUT = 3;
+    public static final int CMD_ROTATE = 4;
+    public static final int CMD_GRAYSCALE = 5;
+    public static final int CMD_INVERT = 6;
+    public static final int CMD_BLUR = 7;
+    public static final int CMD_COLOR_SPLASH = 8;
+    public static final int CMD_SEPIA = 9;
+    public static final int CMD_PENCIL_SKETCH = 10;
 }

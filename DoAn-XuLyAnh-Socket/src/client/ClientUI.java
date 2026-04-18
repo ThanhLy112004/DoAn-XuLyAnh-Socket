@@ -1,115 +1,116 @@
 package client;
 
-import share.Constants; // Import file cấu hình chung
+import share.Constants;
 import javax.swing.*;
 import java.awt.*;
 import java.awt.image.BufferedImage;
 import java.io.File;
 
 public class ClientUI extends JFrame {
-    private JLabel lblOriginal, lblResult;
+    private JLabel lblOriginal, lblResult, lblStatus;
     private JButton btnChoose, btnSend;
     private JComboBox<String> cbFunctions;
+    private JRadioButton radTCP, radUDP;
     private File selectedFile;
 
     public ClientUI() {
-        setTitle("Đồ Án Lập Trình Mạng - Client Xử Lý Ảnh");
-        setSize(900, 600);
+        setTitle("Đồ Án Lập Trình Mạng - TCP/UDP Image Processor");
+        setSize(1000, 700);
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setLayout(new BorderLayout(10, 10));
 
-        // --- PHẦN TRÊN: CÁC NÚT ĐIỀU KHIỂN ---
-        JPanel panelTop = new JPanel();
+        // --- PHẦN TRÊN: ĐIỀU KHIỂN ---
+        JPanel panelTop = new JPanel(new FlowLayout());
         btnChoose = new JButton("Chọn Ảnh");
         
-        // Danh sách chức năng hiển thị cho người dùng
-        String[] functions = {"1. Nén ảnh", "2. Phóng to", "3. Thu nhỏ", "4. Xoay ảnh", "5. Đen trắng", "6. Đảo màu", "7. Làm mờ"};
+        String[] functions = {
+            "1. Nén ảnh", "2. Phóng to", "3. Thu nhỏ", "4. Xoay ảnh", "5. Đen trắng", 
+            "6. Đảo màu", "7. Làm mờ", "8. Color Splash", "9. Phim cũ (Sepia)", "10. Phác họa Bút chì"
+        };
         cbFunctions = new JComboBox<>(functions);
         
+        radTCP = new JRadioButton("TCP (Chậm, An toàn)", true);
+        radUDP = new JRadioButton("UDP (Nhanh, Rủi ro)");
+        ButtonGroup bg = new ButtonGroup();
+        bg.add(radTCP); bg.add(radUDP);
+        
         btnSend = new JButton("Gửi qua Server");
-        btnSend.setEnabled(false); // Ẩn nút gửi khi chưa chọn ảnh
+        btnSend.setEnabled(false);
 
         panelTop.add(btnChoose);
         panelTop.add(new JLabel("  Chức năng:"));
         panelTop.add(cbFunctions);
+        panelTop.add(radTCP);
+        panelTop.add(radUDP);
         panelTop.add(btnSend);
         add(panelTop, BorderLayout.NORTH);
 
-        // --- PHẦN GIỮA: HIỂN THỊ ẢNH ---
+        // --- PHẦN GIỮA: HIỂN THỊ ẢNH (Dùng ScrollPane) ---
         JPanel panelImages = new JPanel(new GridLayout(1, 2, 10, 0));
+        lblOriginal = new JLabel("Ảnh gốc", SwingConstants.CENTER);
+        lblResult = new JLabel("Ảnh kết quả", SwingConstants.CENTER);
         
-        lblOriginal = new JLabel("Ảnh gốc sẽ hiện ở đây", SwingConstants.CENTER);
-        lblOriginal.setBorder(BorderFactory.createLineBorder(Color.GRAY));
-        
-        lblResult = new JLabel("Ảnh kết quả sẽ hiện ở đây", SwingConstants.CENTER);
-        lblResult.setBorder(BorderFactory.createLineBorder(Color.RED));
-
-        panelImages.add(lblOriginal);
-        panelImages.add(lblResult);
+        panelImages.add(new JScrollPane(lblOriginal));
+        panelImages.add(new JScrollPane(lblResult));
         add(panelImages, BorderLayout.CENTER);
 
-        // --- GÁN SỰ KIỆN CHO NÚT BẤM ---
+        // --- PHẦN DƯỚI: TRẠNG THÁI ---
+        lblStatus = new JLabel(" Trạng thái: Sẵn sàng");
+        lblStatus.setForeground(Color.BLUE);
+        add(lblStatus, BorderLayout.SOUTH);
+
         setupListeners();
     }
 
     private void setupListeners() {
-        // 1. Nút Chọn Ảnh
         btnChoose.addActionListener(e -> {
             JFileChooser fileChooser = new JFileChooser();
-            int result = fileChooser.showOpenDialog(this);
-            if (result == JFileChooser.APPROVE_OPTION) {
+            if (fileChooser.showOpenDialog(this) == JFileChooser.APPROVE_OPTION) {
                 selectedFile = fileChooser.getSelectedFile();
-                // Hiển thị ảnh (Scale cho vừa khung 400x400)
-                ImageIcon icon = new ImageIcon(new ImageIcon(selectedFile.getAbsolutePath()).getImage().getScaledInstance(400, 400, Image.SCALE_SMOOTH));
-                lblOriginal.setIcon(icon);
-                lblOriginal.setText("");
-                btnSend.setEnabled(true); 
-                lblResult.setIcon(null);
-                lblResult.setText("Sẵn sàng gửi...");
+                // Ảnh gốc hiển thị dạng vừa màn hình để dễ nhìn
+                lblOriginal.setIcon(new ImageIcon(new ImageIcon(selectedFile.getAbsolutePath()).getImage().getScaledInstance(400, 400, Image.SCALE_SMOOTH)));
+                btnSend.setEnabled(true);
             }
         });
 
-        // 2. Nút Gửi lên Server
         btnSend.addActionListener(e -> {
             if (selectedFile == null) return;
-
-            // Ánh xạ vị trí người dùng chọn trên ComboBox với Mã lệnh chuẩn trong Constants
+            
+            // Map 10 chức năng
             int[] commandMap = {
-                Constants.CMD_COMPRESS,  // 0
-                Constants.CMD_ZOOM_IN,   // 1
-                Constants.CMD_ZOOM_OUT,  // 2
-                Constants.CMD_ROTATE,    // 3
-                Constants.CMD_GRAYSCALE, // 4
-                Constants.CMD_INVERT,    // 5
-                Constants.CMD_BLUR       // 6
+                Constants.CMD_COMPRESS, Constants.CMD_ZOOM_IN, Constants.CMD_ZOOM_OUT,
+                Constants.CMD_ROTATE, Constants.CMD_GRAYSCALE, Constants.CMD_INVERT,
+                Constants.CMD_BLUR, Constants.CMD_COLOR_SPLASH, Constants.CMD_SEPIA, Constants.CMD_PENCIL_SKETCH
             };
-            
-            // Lấy ra mã lệnh tương ứng
             int commandCode = commandMap[cbFunctions.getSelectedIndex()];
+            boolean isTCP = radTCP.isSelected();
             
-            lblResult.setText("Đang gửi và chờ Server xử lý...");
-            btnSend.setEnabled(false); // Khóa nút trong lúc chờ mạng
+            lblStatus.setText(" Trạng thái: Đang gửi và xử lý...");
+            btnSend.setEnabled(false);
 
-            // Dùng Thread để giao diện không bị đơ
             new Thread(() -> {
                 try {
-                    // Gọi hàm gửi ảnh qua mạng
-                    BufferedImage resultImage = ImageClient.sendAndReceiveImage(selectedFile, commandCode);
+                    long startTime = System.currentTimeMillis();
+                    BufferedImage resultImage;
                     
-                    // Cập nhật giao diện khi có ảnh trả về
+                    if (isTCP) {
+                        resultImage = ImageClient.sendAndReceiveImage(selectedFile, commandCode);
+                    } else {
+                        resultImage = UdpImageClient.sendAndReceiveImage(selectedFile, commandCode);
+                    }
+                    
+                    long timeTaken = System.currentTimeMillis() - startTime;
+
                     SwingUtilities.invokeLater(() -> {
-                        ImageIcon resultIcon = new ImageIcon(resultImage.getScaledInstance(400, 400, Image.SCALE_SMOOTH));
-                        lblResult.setIcon(resultIcon);
-                        lblResult.setText("");
+                        // HIỂN THỊ KÍCH THƯỚC THẬT ĐỂ TEST PHÓNG TO/THU NHỎ
+                        lblResult.setIcon(new ImageIcon(resultImage));
+                        lblStatus.setText(String.format(" Thành công! Giao thức: %s | Tốc độ: %d ms", isTCP ? "TCP" : "UDP", timeTaken));
                         btnSend.setEnabled(true);
                     });
                 } catch (Exception ex) {
-                    // Xử lý khi có lỗi (ví dụ Server chưa bật)
                     SwingUtilities.invokeLater(() -> {
-                        lblResult.setText("Lỗi kết nối Server! (Server đã bật chưa?)");
-                        lblResult.setIcon(null);
+                        lblStatus.setText(" Lỗi mạng: " + ex.getMessage());
                         btnSend.setEnabled(true);
-                        System.out.println("Lỗi mạng: " + ex.getMessage());
                     });
                 }
             }).start();
@@ -117,9 +118,6 @@ public class ClientUI extends JFrame {
     }
 
     public static void main(String[] args) {
-        SwingUtilities.invokeLater(() -> {
-            ClientUI ui = new ClientUI();
-            ui.setVisible(true);
-        });
+        SwingUtilities.invokeLater(() -> new ClientUI().setVisible(true));
     }
 }

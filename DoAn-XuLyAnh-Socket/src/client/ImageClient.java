@@ -12,7 +12,7 @@ public class ImageClient {
     public static BufferedImage sendAndReceiveImage(File imageFile, int commandCode) throws Exception {
         
         // Tạo kết nối bằng IP và Port lấy từ file Constants dùng chung
-        try (Socket socket = new Socket(Constants.SERVER_IP, Constants.SERVER_PORT);
+        try (Socket socket = new Socket(Constants.SERVER_IP, Constants.SERVER_PORT_TCP);
              DataOutputStream dos = new DataOutputStream(socket.getOutputStream());
              DataInputStream dis = new DataInputStream(socket.getInputStream())) {
 

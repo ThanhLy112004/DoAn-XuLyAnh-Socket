@@ -1,29 +1,35 @@
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import share.Constants;
 
 public class ImageServer {
-    private static final int PORT = 5000;
+    // Tối ưu Đa luồng: Pool giới hạn 10 luồng xử lý đồng thời
+    private static final ExecutorService tcpPool = Executors.newFixedThreadPool(10);
 
     public static void main(String[] args) {
-        LogWindow.log("Khởi động Server xử lý ảnh trên cổng " + PORT + "...");
+        // Khởi chạy UDP Server song song ngầm
+        new Thread(() -> {
+            try {
+                UdpImageServer.startServer();
+            } catch (Exception e) {
+                LogWindow.log("Lỗi UDP Server: " + e.getMessage());
+            }
+        }).start();
 
-        // 1. Tạo ServerSocket(port)
-        try (ServerSocket serverSocket = new ServerSocket(PORT)) {
-            LogWindow.log("Đang chờ khách kết nối...");
-
-            // 2. Trong vòng lặp while(true)
+        // Khởi chạy TCP Server ở luồng chính
+        LogWindow.log("Khởi động TCP Server cổng " + Constants.SERVER_PORT_TCP);
+        try (ServerSocket serverSocket = new ServerSocket(Constants.SERVER_PORT_TCP)) {
             while (true) {
-                // Khi có khách kết nối
                 Socket clientSocket = serverSocket.accept();
-                LogWindow.log("Có khách mới kết nối từ IP: " + clientSocket.getInetAddress().getHostAddress());
-
-                // Tạo một Thread mới (ClientHandler) và chạy
-                ClientHandler handler = new ClientHandler(clientSocket);
-                new Thread(handler).start();
+                LogWindow.log("TCP: Có khách kết nối từ " + clientSocket.getInetAddress().getHostAddress());
+                
+                // Giao việc cho ThreadPool thay vì tạo Thread mới
+                tcpPool.execute(new ClientHandler(clientSocket));
             }
         } catch (Exception e) {
-            LogWindow.log("Lỗi Server: " + e.getMessage());
-            e.printStackTrace();
+            LogWindow.log("Lỗi TCP Server: " + e.getMessage());
         }
     }
 }
