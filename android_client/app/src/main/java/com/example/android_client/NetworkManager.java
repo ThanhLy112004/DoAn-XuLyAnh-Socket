@@ -120,7 +120,10 @@ public class NetworkManager {
                 currentSendOffset += sendLength;
                 
                 // Ngu 1ms de tranh tran bo dem Server
-                Thread.sleep(1); 
+                if (i % 15 == 0) {
+                    Thread.sleep(1); 
+                }
+                                
                 
                 if (callback != null && (i % 50 == 0 || i == totalChunks - 1)) {
                     callback.onProgressUpdate(String.format(Locale.US, "Dang gui: %d/%d manh...", (i+1), totalChunks), "...");
