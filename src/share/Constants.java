@@ -1,15 +1,31 @@
 package share;
 
 public class Constants {
-    public static final String SERVER_IP = "127.0.0.1"; // Sẽ đổi ở Bước 4
+    
+    // =====================================================================
+    // CAU HINH MANG (NETWORK CONFIGURATION)
+    // =====================================================================
+    // IP may chu (Thay doi thanh IP LAN cua may tinh khi mang ra chay thuc te)
+    public static final String SERVER_IP = "127.0.0.1"; 
+    
+    // Cong (Port) lang nghe cua cac giao thuc
     public static final int SERVER_PORT_TCP = 8888;
     public static final int SERVER_PORT_UDP = 8889;
     
-    // Giới hạn an toàn của gói tin UDP (khoảng 16KB)
+    // =====================================================================
+    // CAU HINH UDP VA MO PHONG MANG (UDP & NETWORK SIMULATION)
+    // =====================================================================
+    // Gioi han an toan cua mot manh UDP de tranh tran bo dem mang (Kich thuoc 16KB)
     public static final int UDP_CHUNK_SIZE = 16384; 
-    // Tỉ lệ cố tình làm rớt gói tin để Demo (0.05 = rớt 5%)
-public static final double SIMULATE_DROP_RATE = 0.05;
-    // Mã lệnh
+    
+    // Ty le co tinh danh rot goi tin de mo phong mang kem (Vi du: 0.15 = rot 15%)
+    // Luu y: Bien nay KHONG co chu 'final' de Giao dien UI cua Server co the dieu chinh truc tiep (Live)
+    public static double SIMULATE_DROP_RATE = 0.0;
+    
+    // =====================================================================
+    // DANH SACH MA LENH XU LY ANH (COMMAND CODES)
+    // =====================================================================
+    // Dung de Client gui yeu cau va Server nhan dien thuat toan tuong ung
     public static final int CMD_COMPRESS = 1;
     public static final int CMD_ZOOM_IN = 2;
     public static final int CMD_ZOOM_OUT = 3;

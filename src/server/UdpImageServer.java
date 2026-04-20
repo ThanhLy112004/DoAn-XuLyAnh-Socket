@@ -1,102 +1,162 @@
 package server;
 
-import core.LogWindow;
 import core.ImageProcessor;
 import share.Constants;
 import java.net.*;
+import java.nio.ByteBuffer;
 
 public class UdpImageServer {
+    
     public static void startServer() throws Exception {
-        LogWindow.log("Khởi động UDP Server cổng " + Constants.SERVER_PORT_UDP);
+        ServerUI.log("Khoi dong UDP Server tren cong " + Constants.SERVER_PORT_UDP);
 
-        try (DatagramSocket socket = new DatagramSocket(Constants.SERVER_PORT_UDP)) {
-            socket.setSendBufferSize(5 * 1024 * 1024);
-            socket.setReceiveBufferSize(5 * 1024 * 1024);
+        // Su dung try-with-resources de quan ly socket an toan
+        try (DatagramSocket udpSocket = new DatagramSocket(Constants.SERVER_PORT_UDP)) {
+            
+            // Mo rong bo dem (Buffer) len 5MB de hung "con mua" goi tin tu Android gui len
+            udpSocket.setSendBufferSize(5 * 1024 * 1024);
+            udpSocket.setReceiveBufferSize(5 * 1024 * 1024);
+            
+            // Vong lap vo han lang nghe request cua khach hang
             while (true) {
                 try {
                     // ==========================================================
-                    // 1. CHỜ NHẬN VÀ CẮT HEADER (Chờ vô tận không timeout)
+                    // 1. NHAN KHOI TIN HEADER (Dung im cho vo tan)
                     // ==========================================================
-                    socket.setSoTimeout(0); 
-                    byte[] buffer = new byte[1024];
-                    DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
-                    socket.receive(packet);
+                    udpSocket.setSoTimeout(0); 
+                    byte[] headerBuffer = new byte[1024];
+                    DatagramPacket headerPacket = new DatagramPacket(headerBuffer, headerBuffer.length);
+                    udpSocket.receive(headerPacket);
                     
-                    String headerStr = new String(packet.getData(), 0, packet.getLength());
-                    String[] headerInfo = headerStr.split(":");
+                    String headerMessage = new String(headerPacket.getData(), 0, headerPacket.getLength());
+                    String[] headerParts = headerMessage.split(":");
                     
-                    // Quy ước UDP: HEADER:UserId:Cmd:ImgLen:TotalChunks
-                    if(!headerInfo[0].equals("HEADER") || headerInfo.length < 5) {
-                        continue; // Bỏ qua gói tin rác
+                    if(!headerParts[0].equals("HEADER") || headerParts.length < 5) {
+                        continue; // Neu nhan rac thi bo qua, lang nghe tiep
                     }
                     
-                    String userId = headerInfo[1];
-                    int cmd = Integer.parseInt(headerInfo[2]);
-                    int imgLen = Integer.parseInt(headerInfo[3]);
-                    int totalChunks = Integer.parseInt(headerInfo[4]);
-                    InetAddress clientAddr = packet.getAddress();
-                    int clientPort = packet.getPort();
+                    String userId = headerParts[1];
+                    int commandCode = Integer.parseInt(headerParts[2]);
+                    int expectedImageSize = Integer.parseInt(headerParts[3]);
+                    int expectedTotalChunks = Integer.parseInt(headerParts[4]); 
+                    
+                    InetAddress clientAddress = headerPacket.getAddress();
+                    int clientPort = headerPacket.getPort();
 
-                    LogWindow.log("UDP: Nhận yêu cầu từ " + userId + " (cmd: " + cmd + "). Chờ " + totalChunks + " mảnh...");
+                    ServerUI.log("--- BAT DAU PHIEN UDP TU CLIENT: " + userId + " ---");
 
                     // ==========================================================
-                    // 2. NHẬN CÁC MẢNH ẢNH (Timeout 3s)
+                    // 2. NHAN CAC MANH ANH (Phat Timeout sau 300ms)
                     // ==========================================================
-                    socket.setSoTimeout(3000); 
-                    byte[] imgData = new byte[imgLen];
-                    int offset = 0;
-                    for (int i = 0; i < totalChunks; i++) {
-                        byte[] chunkBuffer = new byte[Constants.UDP_CHUNK_SIZE];
-                        DatagramPacket chunkPacket = new DatagramPacket(chunkBuffer, chunkBuffer.length);
-                        socket.receive(chunkPacket);
-                        System.arraycopy(chunkPacket.getData(), 0, imgData, offset, chunkPacket.getLength());
-                        offset += chunkPacket.getLength();
+                    udpSocket.setSoTimeout(300); 
+                    byte[] originalImageData = new byte[expectedImageSize];
+                    int currentReceiveOffset = 0;
+                    int actualReceivedChunks = 0; 
+                    
+                    try {
+                        for (int i = 0; i < expectedTotalChunks; i++) {
+                            byte[] chunkBuffer = new byte[Constants.UDP_CHUNK_SIZE];
+                            DatagramPacket chunkPacket = new DatagramPacket(chunkBuffer, chunkBuffer.length);
+                            udpSocket.receive(chunkPacket);
+                            
+                            // Ghep noi manh vao mang chinh
+                            System.arraycopy(chunkPacket.getData(), 0, originalImageData, currentReceiveOffset, chunkPacket.getLength());
+                            currentReceiveOffset += chunkPacket.getLength();
+                            actualReceivedChunks++; 
+                        }
+                    } catch (SocketTimeoutException timeoutException) {
+                        // Bo qua loi, chap nhan viec anh bi thieu manh de di den buoc xu ly tiep theo
                     }
 
-                    // ==========================================================
-                    // 3. LƯU Ổ CỨNG, XỬ LÝ VÀ GHI DATABASE
-                    // ==========================================================
-                    // Lưu ảnh gốc
-                    String originalPath = FileManager.saveImageToDisk(imgData, "original", userId + "_udp_goc");
-                    
-                    // Bấm giờ xử lý
-                    long startTime = System.currentTimeMillis();
-                    byte[] resultData = ImageProcessor.processRequest(cmd, imgData);
-                    if (resultData == null) throw new Exception("Core không xử lý được ảnh bị vỡ.");
-                    long processTime = System.currentTimeMillis() - startTime;
-                    
-                    // Lưu ảnh kết quả
-                    String resultPath = FileManager.saveImageToDisk(resultData, "result", userId + "_udp_xong");
-                    
-                    // Ghi Database
-                    boolean dbSuccess = HistoryDAO.saveRecord(userId, cmd, "UDP", processTime, originalPath, resultPath);
-                    if (dbSuccess) {
-                        LogWindow.log("=> UDP: Đã lưu lịch sử vào Database thành công.");
+                    // Tinh toan ty le rot goi tin tu Client gui len
+                    String packetLossReport = "Da nhan: " + actualReceivedChunks + "/" + expectedTotalChunks + " manh.";
+                    if (actualReceivedChunks < expectedTotalChunks) {
+                        ServerUI.log("=> CANH BAO UDP: Rot goi tin tren duong len! " + packetLossReport);
+                    } else {
+                        ServerUI.log("=> UDP: Tuyet voi! " + packetLossReport + " (Mang hoan hao)");
                     }
 
                     // ==========================================================
-                    // 4. GỬI KẾT QUẢ TRẢ LẠI CLIENT
+                    // 3. XU LY ANH, LUU FILE VA GHI DATABASE
                     // ==========================================================
-                    int resultTotalChunks = (int) Math.ceil((double) resultData.length / Constants.UDP_CHUNK_SIZE);
-                    String respHeader = "RESP:" + resultData.length + ":" + resultTotalChunks;
-                    byte[] respHdrData = respHeader.getBytes();
-                    socket.send(new DatagramPacket(respHdrData, respHdrData.length, clientAddr, clientPort));
+                    long startTimeMs = System.currentTimeMillis();
+                    byte[] processedImageData = null;
+                    
+                    try {
+                        processedImageData = ImageProcessor.processRequest(commandCode, originalImageData);
+                    } catch (Exception exception) {
+                        ServerUI.log("=> Bep truong tu choi vi anh bi rach nang. Tra nguyen ban loi ve Client!");
+                    }
 
-                    int resOffset = 0;
-                    for (int i = 0; i < resultTotalChunks; i++) {
-                        int length = Math.min(Constants.UDP_CHUNK_SIZE, resultData.length - resOffset);
-                        byte[] chunk = new byte[length];
-                        System.arraycopy(resultData, resOffset, chunk, 0, length);
-                        socket.send(new DatagramPacket(chunk, length, clientAddr, clientPort));
-                        resOffset += length;
+                    // Co che an toan: Neu xu ly that bai, tra luon anh loi ve de Android ve hinh ranh (Datamoshing)
+                    if (processedImageData == null) {
+                        processedImageData = originalImageData; 
                     }
                     
-                    LogWindow.log("UDP: Đã xử lý và trả về " + resultData.length + " bytes.");
+                    long processingTimeMs = System.currentTimeMillis() - startTimeMs;
                     
-                } catch (SocketTimeoutException timeout) {
-                    LogWindow.log("UDP Lỗi: Khách hàng bị rớt mạng giữa chừng, không nhận đủ mảnh!");
-                } catch (Exception ex) {
-                    LogWindow.log("Lỗi xử lý UDP: " + ex.getMessage());
+                    // Ghi Log ngam de khong anh huong den toc do tra ket qua
+                    try {
+                        String originalFilePath = FileManager.saveImageToDisk(originalImageData, "original", userId + "_udp_goc");
+                        String resultFilePath = FileManager.saveImageToDisk(processedImageData, "result", userId + "_udp_xong");
+                        
+                        // Ghi chu vao Database so manh bi rot de sau nay de danh gia
+                        String protocolLog = "UDP (" + actualReceivedChunks + "/" + expectedTotalChunks + ")";
+                        HistoryDAO.saveRecord(userId, commandCode, protocolLog, processingTimeMs, originalFilePath, resultFilePath);
+                    } catch (Exception dbException) {
+                        ServerUI.log("Loi ghi log UDP (Khong anh huong truyen tai): " + dbException.getMessage());
+                    }
+                    
+                    ServerUI.updateImages(originalImageData, processedImageData);          
+                    
+                    // ==========================================================
+                    // 4. GUI TRA CLIENT (FLOW CONTROL VA DANH INDEX)
+                    // ==========================================================
+                    int responseTotalChunks = (int) Math.ceil((double) processedImageData.length / Constants.UDP_CHUNK_SIZE);
+                    String responseHeader = "RESP:" + processedImageData.length + ":" + responseTotalChunks;
+                    byte[] responseHeaderData = responseHeader.getBytes();
+                    
+                    // Ban vien đan dau tien la Header thong bao dung luong
+                    udpSocket.send(new DatagramPacket(responseHeaderData, responseHeaderData.length, clientAddress, clientPort));
+
+                    int currentSendOffset = 0;
+                    int simulatedDroppedCount = 0; 
+                    
+                    // Cap phat bo dem du chua kich thuoc Chunk + 4 bytes de luu so Index
+                    ByteBuffer chunkWrapper = ByteBuffer.allocate(Constants.UDP_CHUNK_SIZE + 4);
+
+                    for (int chunkIndex = 0; chunkIndex < responseTotalChunks; chunkIndex++) {
+                        int chunkDataLength = Math.min(Constants.UDP_CHUNK_SIZE, processedImageData.length - currentSendOffset);
+                        
+                        chunkWrapper.clear();
+                        chunkWrapper.putInt(chunkIndex); // 1. Danh so thu tu vao dau goi tin
+                        chunkWrapper.put(processedImageData, currentSendOffset, chunkDataLength); // 2. Nhet du lieu anh vao sau
+                        
+                        byte[] finalPayload = new byte[chunkDataLength + 4];
+                        System.arraycopy(chunkWrapper.array(), 0, finalPayload, 0, finalPayload.length);
+                        
+                        // 3. CHIEN THUAT BAO VE THONG TIN COT LOI (DATAMOSHING)
+                        // Kiem tra: Neu la 2 goi tin dau tien (chua thong tin header cua JPEG) thi cam tuyet doi khong duoc xoa
+                        if (chunkIndex < 2 || Math.random() >= Constants.SIMULATE_DROP_RATE) {
+                            udpSocket.send(new DatagramPacket(finalPayload, finalPayload.length, clientAddress, clientPort));
+                        } else {
+                            simulatedDroppedCount++; 
+                        }
+                        
+                        currentSendOffset += chunkDataLength;
+                        
+                        // 4. FLOW CONTROL: Ngu 1ms de tranh tinh trang card mang cua Android bi ngop
+                        Thread.sleep(1); 
+                    }
+                    
+                    if (simulatedDroppedCount > 0) {
+                        ServerUI.log("=> Tra Client: Mo phong mang ruc rac, DA CO TINH DANH ROT " + simulatedDroppedCount + "/" + responseTotalChunks + " manh!\n");
+                    } else {
+                        ServerUI.log("=> Hoan tat gui tra Client (" + processingTimeMs + "ms) - Mang on dinh.\n");
+                    }
+
+                } catch (Exception exception) {
+                    ServerUI.log("Loi trong phien giao dich UDP: " + exception.getMessage());
                 }
             }
         }

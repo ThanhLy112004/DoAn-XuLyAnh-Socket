@@ -1,15 +1,33 @@
-# Bỏ qua các file biên dịch
+# ==========================================
+# 1. BỎ QUA CÁC FILE BIÊN DỊCH CỦA JAVA
+# ==========================================
 *.class
 bin/
+out/
 target/
+build/
 
-# Bỏ qua cấu hình của các IDE
-.vscode/
+# ==========================================
+# 2. BỎ QUA CẤU HÌNH CỦA IDE (Máy ai nấy dùng)
+# ==========================================
 .idea/
 *.iml
-.project
+.vscode/
 .classpath
+.project
 .settings/
-# Bỏ qua dữ liệu ảnh và Database local của Server
-/ServerData/
+
+# ==========================================
+# 3. BỎ QUA CƠ SỞ DỮ LIỆU SINH RA LÚC CHẠY
+# ==========================================
 *.db
+*.sqlite
+
+# ==========================================
+# 4. BỎ QUA RÁC LOG VÀ DỮ LIỆU NGƯỜI DÙNG
+# ==========================================
+*.log
+# Chặn hoàn toàn thư mục lưu ảnh của FileManager:
+/ServerData/
+# Chặn thư mục test (nếu có gọi trong hàm main của ImageProcessor)
+/test_images/output/

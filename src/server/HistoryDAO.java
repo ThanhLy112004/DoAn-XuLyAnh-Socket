@@ -1,6 +1,5 @@
 package server;
 
-import core.LogWindow;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
@@ -8,12 +7,12 @@ import java.sql.ResultSet;
 import java.sql.Statement;
 
 public class HistoryDAO {
-    // Đường dẫn tạo file Database ngay trong thư mục gốc của project
-    private static final String DB_URL = "jdbc:sqlite:image_history.db";
+    // Duong dan tao file Database ngay trong thu muc goc cua project
+    private static final String DATABASE_URL = "jdbc:sqlite:image_history.db";
 
-    // Khởi tạo bảng nếu chưa có (Chạy 1 lần lúc bật Server)
+    // Khoi tao bang neu chua co (Chay 1 lan luc bat Server)
     public static void initializeDatabase() {
-        String sql = "CREATE TABLE IF NOT EXISTS history ("
+        String createTableSql = "CREATE TABLE IF NOT EXISTS image_history ("
                 + "id INTEGER PRIMARY KEY AUTOINCREMENT,"
                 + "user_id TEXT,"
                 + "command_code INTEGER,"
@@ -25,70 +24,78 @@ public class HistoryDAO {
                 + ");";
 
         try {
-            // Ép Java nạp Driver SQLite vào bộ nhớ (Khắc phục triệt để lỗi No suitable driver)
+            // Ep Java nap Driver SQLite vao bo nho
             Class.forName("org.sqlite.JDBC");
             
-            try (Connection conn = DriverManager.getConnection(DB_URL);
-                 Statement stmt = conn.createStatement()) {
-                stmt.execute(sql);
-                LogWindow.log("Database: Khởi tạo/Kết nối bảng lịch sử thành công.");
+            // Su dung try-with-resources de tu dong dong ket noi (Connection) va lenh (Statement)
+            try (Connection databaseConnection = DriverManager.getConnection(DATABASE_URL);
+                 Statement sqlStatement = databaseConnection.createStatement()) {
+                 
+                sqlStatement.execute(createTableSql);
+                ServerUI.log("Database: Khoi tao va ket noi bang lich su thanh cong.");
             }
-        } catch (Exception e) {
-            LogWindow.log("Lỗi Database: " + e.getMessage());
+        } catch (Exception exception) {
+            ServerUI.log("Loi Database: " + exception.getMessage());
         }
     }
 
-    // Hàm gọi để lưu lịch sử mỗi khi xử lý xong 1 ảnh
-    public static boolean saveRecord(String userId, int cmd, String protocol, 
-                                     long timeMs, String origPath, String resPath) {
-        String sql = "INSERT INTO history(user_id, command_code, protocol, process_time_ms, original_path, result_path) VALUES(?,?,?,?,?,?)";
+    // Ham goi de luu lich su moi khi xu ly xong 1 anh
+    public static boolean saveRecord(String userId, int commandCode, String protocol, long processTimeMs, String originalPath, String resultPath) {
+        String insertSql = "INSERT INTO image_history(user_id, command_code, protocol, process_time_ms, original_path, result_path, created_at) " +
+                           "VALUES(?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))";
         
-        try (Connection conn = DriverManager.getConnection(DB_URL);
-             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+        try (Connection databaseConnection = DriverManager.getConnection(DATABASE_URL);
+             PreparedStatement preparedStatement = databaseConnection.prepareStatement(insertSql)) {
+             
+            preparedStatement.setString(1, userId);
+            preparedStatement.setInt(2, commandCode);
+            preparedStatement.setString(3, protocol);
+            preparedStatement.setLong(4, processTimeMs);
+            preparedStatement.setString(5, originalPath);
+            preparedStatement.setString(6, resultPath);
             
-            pstmt.setString(1, userId);
-            pstmt.setInt(2, cmd);
-            pstmt.setString(3, protocol);
-            pstmt.setLong(4, timeMs);
-            pstmt.setString(5, origPath);
-            pstmt.setString(6, resPath);
-            
-            pstmt.executeUpdate();
+            preparedStatement.executeUpdate();
             return true;
-        } catch (Exception e) {
-            LogWindow.log("Lỗi lưu DB: " + e.getMessage());
+            
+        } catch (Exception exception) {
+            // Sửa lỗi: Dong bo su dung ServerUI.log thay vi System.out.println
+            ServerUI.log("Loi luu vao Database: " + exception.getMessage());
             return false;
         }
     }
 
-    // Hàm truy xuất và in toàn bộ lịch sử ra màn hình Log
+    // Ham truy xuat va in toan bo lich su ra man hinh Log
     public static void printAllHistory() {
-        String sql = "SELECT * FROM history";
+        String selectSql = "SELECT * FROM image_history";
         
-        try (Connection conn = DriverManager.getConnection(DB_URL);
-             Statement stmt = conn.createStatement();
-             ResultSet rs = stmt.executeQuery(sql)) {
+        try (Connection databaseConnection = DriverManager.getConnection(DATABASE_URL);
+             Statement sqlStatement = databaseConnection.createStatement();
+             ResultSet resultSet = sqlStatement.executeQuery(selectSql)) {
             
-            LogWindow.log("--- BẮT ĐẦU IN LỊCH SỬ TỪ SQLITE ---");
-            while (rs.next()) {
-                int id = rs.getInt("id");
-                String userId = rs.getString("user_id");
-                int cmd = rs.getInt("command_code");
-                String protocol = rs.getString("protocol");
-                long time = rs.getLong("process_time_ms");
-                String origPath = rs.getString("original_path");
-                String resPath = rs.getString("result_path");
+            ServerUI.log("--- BAT DAU IN LICH SU TU SQLITE ---");
+            
+            // Duyet qua tung dong du lieu ket qua tra ve tu Database
+            while (resultSet.next()) {
+                int recordId = resultSet.getInt("id");
+                String userId = resultSet.getString("user_id");
+                int commandCode = resultSet.getInt("command_code");
+                String protocolName = resultSet.getString("protocol");
+                long processingTime = resultSet.getLong("process_time_ms");
+                String originalImagePath = resultSet.getString("original_path");
+                String resultImagePath = resultSet.getString("result_path");
+                String createdAt = resultSet.getString("created_at"); 
                 
-                String logMessage = String.format("ID: %d | User: %s | Cmd: %d | Giao thức: %s | Tốc độ: %d ms", 
-                                                  id, userId, cmd, protocol, time);
-                LogWindow.log(logMessage);
-                LogWindow.log("  -> Gốc: " + origPath);
-                LogWindow.log("  -> Kết quả: " + resPath);
+                String logMessage = String.format("ID: %d | Thoi gian: %s | User: %s | Cmd: %d | Giao thuc: %s | Toc do: %d ms", 
+                                                  recordId, createdAt, userId, commandCode, protocolName, processingTime);
+                ServerUI.log(logMessage);
+                ServerUI.log("  -> Goc: " + originalImagePath);
+                ServerUI.log("  -> Ket qua: " + resultImagePath);
             }
-            LogWindow.log("--- KẾT THÚC IN LỊCH SỬ ---");
             
-        } catch (Exception e) {
-            LogWindow.log("Lỗi khi truy xuất DB: " + e.getMessage());
+            ServerUI.log("--- KET THUC IN LICH SU ---");
+            
+        } catch (Exception exception) {
+            ServerUI.log("Loi khi truy xuat Database: " + exception.getMessage());
         }
     }
 }

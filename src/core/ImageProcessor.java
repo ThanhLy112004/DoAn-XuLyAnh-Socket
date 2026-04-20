@@ -1,4 +1,5 @@
 package core;
+
 import javax.imageio.IIOImage;
 import javax.imageio.ImageIO;
 import javax.imageio.ImageWriteParam;
@@ -12,269 +13,276 @@ import java.io.*;
 
 public class ImageProcessor {
 
-    public static BufferedImage readImage(byte[] data) throws IOException {
-        try (ByteArrayInputStream bais = new ByteArrayInputStream(data)) {
-            return ImageIO.read(bais);
+    // =====================================================================
+    // KHOI DOC GHI DU LIEU CO BAN
+    // =====================================================================
+    
+    public static BufferedImage readImage(byte[] imageData) throws IOException {
+        try (ByteArrayInputStream inputStream = new ByteArrayInputStream(imageData)) {
+            return ImageIO.read(inputStream);
         }
     }
 
-    public static byte[] writeImage(BufferedImage img, String format) throws IOException {
-        try (ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
-            ImageIO.write(img, format, baos);
-            return baos.toByteArray();
+    public static byte[] writeImage(BufferedImage sourceImage, String formatType) throws IOException {
+        try (ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
+            ImageIO.write(sourceImage, formatType, outputStream);
+            return outputStream.toByteArray();
         }
     }
 
-    // Hàm giao tiếp chuẩn để Server gọi vào (như yêu cầu trong README)
-    public static byte[] processRequest(int command, byte[] inputImageData) {
+    // =====================================================================
+    // HAM EP CAN JPEG (DAC NHIEM CHO UDP)
+    // =====================================================================
+    // Bien qualityRate dung de dieu chinh muc do nen anh (tu 0.0 den 1.0)
+    public static byte[] saveAsJpeg(BufferedImage sourceImage, float qualityRate) throws IOException {
+        // Chuyen doi sang chuan RGB de tranh loi khi luu anh co kenh Alpha (trong suot)
+        BufferedImage rgbFormatImage = new BufferedImage(sourceImage.getWidth(), sourceImage.getHeight(), BufferedImage.TYPE_INT_RGB);
+        Graphics2D graphics = rgbFormatImage.createGraphics();
+        graphics.drawImage(sourceImage, 0, 0, Color.WHITE, null);
+        graphics.dispose();
+
+        ByteArrayOutputStream byteOutputStream = new ByteArrayOutputStream();
+        ImageOutputStream imageOutputStream = ImageIO.createImageOutputStream(byteOutputStream);
+        ImageWriter jpegWriter = ImageIO.getImageWritersByFormatName("jpg").next();
+        jpegWriter.setOutput(imageOutputStream);
+
+        ImageWriteParam writeParameters = jpegWriter.getDefaultWriteParam();
+        if (writeParameters.canWriteCompressed()) {
+            writeParameters.setCompressionMode(ImageWriteParam.MODE_EXPLICIT);
+            writeParameters.setCompressionQuality(qualityRate); 
+        }
+
+        jpegWriter.write(null, new IIOImage(rgbFormatImage, null, null), writeParameters);
+        jpegWriter.dispose();
+        imageOutputStream.close();
+        
+        return byteOutputStream.toByteArray();
+    }
+
+    // =====================================================================
+    // BO DINH TUYEN XU LY YEU CAU (MAIN CONTROLLER)
+    // =====================================================================
+    
+    public static byte[] processRequest(int commandCode, byte[] inputImageData) {
         try {
-            BufferedImage img = readImage(inputImageData);
-            if (img == null) return null;
-
-            if (command == 1) { // 1. Nén ảnh (Compress)
-                return compressImage(img);
+            BufferedImage sourceImage = readImage(inputImageData);
+            if (sourceImage == null) {
+                return null;
             }
 
-            BufferedImage result = img;
-            switch (command) {
-                case 2: // 2. Phóng to
-                    result = resize(img, img.getWidth() * 2, img.getHeight() * 2);
-                    break;
-                case 3: // 3. Thu nhỏ
-                    result = resize(img, Math.max(1, img.getWidth() / 2), Math.max(1, img.getHeight() / 2));
-                    break;
-                case 4: // 4. Xoay ảnh (90 độ)
-                    result = rotate(img);
-                    break;
-                case 5: // 5. Đen trắng
-                    result = toGrayscale(img);
-                    break;
-                case 6: // 6. Đảo màu
-                    result = invertColors(img);
-                    break;
-                case 7: // 7. Làm mờ
-                    result = blur(img);
-                    break;
-                case 8: // 8. Color Splash (Giữ tone Đỏ/Hồng)
-                    result = colorSplash(img);
-                    break;
-                case 9: // 9. Màu phim hoài cổ (Vintage Sepia)
-                    result = sepia(img);
-                    break;
-                case 10: // 10. Phác họa Bút chì (Pencil Sketch)
-                    result = pencilSketch(img);
-                    break;
+            // Chuc nang nen anh (1) thi ep dung luong xuong muc thap nhat
+            if (commandCode == 1) { 
+                return saveAsJpeg(sourceImage, 0.10f); 
             }
-            return writeImage(result, "png"); // Mặc định trả về định dạng png để giữ nguyên chất lượng sau xử lý
-        } catch (Exception e) {
-            e.printStackTrace();
+
+            BufferedImage resultImage = sourceImage;
+            switch (commandCode) {
+                case 2: resultImage = zoomIn(sourceImage); break;
+                case 3: resultImage = zoomOut(sourceImage); break;
+                case 4: resultImage = rotate(sourceImage); break;
+                case 5: resultImage = toGrayscale(sourceImage); break;
+                case 6: resultImage = invertColors(sourceImage); break;
+                case 7: resultImage = blur(sourceImage); break;
+                case 8: resultImage = colorSplash(sourceImage); break;
+                case 9: resultImage = sepia(sourceImage); break;
+                case 10: resultImage = pencilSketch(sourceImage); break;
+                default: break; // Truong hop khong xac dinh thi giu nguyen anh goc
+            }
+            
+            // CHIEN THUAT TOI UU DUNG LUONG BANG BANG THONG:
+            float currentQuality = 0.75f; // Mac dinh nen 75%
+            
+            // Cac bo loc tao nhieu (8, 9, 10) co the nen xuong 40% ma mat thuong van thay net
+            // Viec nay giup UDP giam duoc mot nua so luong goi tin bi rot
+            if (commandCode == 8 || commandCode == 9 || commandCode == 10) {
+                currentQuality = 0.40f; 
+            }
+
+            return saveAsJpeg(resultImage, currentQuality); 
+            
+        } catch (Exception exception) {
+            exception.printStackTrace();
             return null;
         }
     }
 
-    public static byte[] compressImage(BufferedImage src) throws IOException {
-        BufferedImage rgbImage = new BufferedImage(src.getWidth(), src.getHeight(), BufferedImage.TYPE_INT_RGB);
-        Graphics2D g = rgbImage.createGraphics();
-        g.drawImage(src, 0, 0, Color.WHITE, null);
-        g.dispose();
-
-        ByteArrayOutputStream baos = new ByteArrayOutputStream();
-        ImageOutputStream ios = ImageIO.createImageOutputStream(baos);
-        ImageWriter writer = ImageIO.getImageWritersByFormatName("jpg").next();
-        writer.setOutput(ios);
-
-        ImageWriteParam param = writer.getDefaultWriteParam();
-        if (param.canWriteCompressed()) {
-            param.setCompressionMode(ImageWriteParam.MODE_EXPLICIT);
-            param.setCompressionQuality(0.1f);
-        }
-
-        writer.write(null, new IIOImage(rgbImage, null, null), param);
-        writer.dispose();
-        ios.close();
-        return baos.toByteArray();
+    public static byte[] compressImage(BufferedImage sourceImage) throws IOException {
+        // Bao cho ham saveAsJpeg: "Hay ep dung luong xuong con 10%"
+        return saveAsJpeg(sourceImage, 0.1f); 
     }
 
-    public static BufferedImage toGrayscale(BufferedImage src) {
-        BufferedImage dst = new BufferedImage(src.getWidth(), src.getHeight(), BufferedImage.TYPE_BYTE_GRAY);
-        Graphics2D g = dst.createGraphics();
-        g.drawImage(src, 0, 0, null);
-        g.dispose();
-        return dst;
+    // =====================================================================
+    // DAN THUAT TOAN XU LY ANH CO BAN
+    // =====================================================================
+
+    public static BufferedImage toGrayscale(BufferedImage sourceImage) {
+        BufferedImage grayImage = new BufferedImage(sourceImage.getWidth(), sourceImage.getHeight(), BufferedImage.TYPE_BYTE_GRAY);
+        Graphics2D graphics = grayImage.createGraphics();
+        graphics.drawImage(sourceImage, 0, 0, null);
+        graphics.dispose();
+        return grayImage;
     }
 
-    public static BufferedImage invertColors(BufferedImage src) {
-        BufferedImage dst = new BufferedImage(src.getWidth(), src.getHeight(), BufferedImage.TYPE_INT_ARGB);
-        for (int y = 0; y < src.getHeight(); y++) {
-            for (int x = 0; x < src.getWidth(); x++) {
-                int rgba = src.getRGB(x, y);
-                int a = (rgba >> 24) & 0xff;
-                int r = 255 - ((rgba >> 16) & 0xff);
-                int g = 255 - ((rgba >> 8) & 0xff);
-                int b = 255 - (rgba & 0xff);
-                int nrgb = (a << 24) | (r << 16) | (g << 8) | b;
-                dst.setRGB(x, y, nrgb);
+    public static BufferedImage invertColors(BufferedImage sourceImage) {
+        int imageWidth = sourceImage.getWidth();
+        int imageHeight = sourceImage.getHeight();
+        BufferedImage invertedImage = new BufferedImage(imageWidth, imageHeight, BufferedImage.TYPE_INT_ARGB);
+        
+        for (int y = 0; y < imageHeight; y++) {
+            for (int x = 0; x < imageWidth; x++) {
+                int pixelRgba = sourceImage.getRGB(x, y);
+                int alpha = (pixelRgba >> 24) & 0xff;
+                int red = 255 - ((pixelRgba >> 16) & 0xff);
+                int green = 255 - ((pixelRgba >> 8) & 0xff);
+                int blue = 255 - (pixelRgba & 0xff);
+                
+                invertedImage.setRGB(x, y, (alpha << 24) | (red << 16) | (green << 8) | blue);
             }
         }
-        return dst;
+        return invertedImage;
     }
 
-    public static BufferedImage resize(BufferedImage src, int targetW, int targetH) {
-        Image scaled = src.getScaledInstance(targetW, targetH, Image.SCALE_SMOOTH);
-        BufferedImage dst = new BufferedImage(targetW, targetH, BufferedImage.TYPE_INT_ARGB);
-        Graphics2D g2 = dst.createGraphics();
-        g2.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
-        g2.drawImage(scaled, 0, 0, null);
-        g2.dispose();
-        return dst;
+    // Zoom In: Cat lay phan trung tam roi phong to len (Giu nguyen kich thuoc khung hinh)
+    public static BufferedImage zoomIn(BufferedImage sourceImage) {
+        int imageWidth = sourceImage.getWidth();
+        int imageHeight = sourceImage.getHeight();
+        
+        BufferedImage croppedCenter = sourceImage.getSubimage(imageWidth / 4, imageHeight / 4, imageWidth / 2, imageHeight / 2);
+        Image scaledImage = croppedCenter.getScaledInstance(imageWidth, imageHeight, Image.SCALE_SMOOTH);
+        
+        BufferedImage zoomedImage = new BufferedImage(imageWidth, imageHeight, BufferedImage.TYPE_INT_RGB);
+        Graphics2D graphics = zoomedImage.createGraphics();
+        graphics.drawImage(scaledImage, 0, 0, null);
+        graphics.dispose();
+        return zoomedImage;
     }
 
-    public static BufferedImage rotate(BufferedImage src) {
-        int w = src.getWidth();
-        int h = src.getHeight();
-        BufferedImage dest = new BufferedImage(h, w, BufferedImage.TYPE_INT_ARGB);
-        Graphics2D g2 = dest.createGraphics();
-        g2.translate(h, 0); 
-        g2.rotate(Math.PI / 2); 
-        g2.drawImage(src, 0, 0, null);
-        g2.dispose();
-        return dest;
+    // Zoom Out: Bop nho anh lai va dat vao nen den (Giu nguyen kich thuoc khung hinh)
+    public static BufferedImage zoomOut(BufferedImage sourceImage) {
+        int imageWidth = sourceImage.getWidth();
+        int imageHeight = sourceImage.getHeight();
+        
+        Image scaledImage = sourceImage.getScaledInstance(imageWidth / 2, imageHeight / 2, Image.SCALE_SMOOTH);
+        BufferedImage zoomedOutImage = new BufferedImage(imageWidth, imageHeight, BufferedImage.TYPE_INT_RGB);
+        
+        Graphics2D graphics = zoomedOutImage.createGraphics();
+        graphics.setColor(Color.BLACK);
+        graphics.fillRect(0, 0, imageWidth, imageHeight);
+        graphics.drawImage(scaledImage, imageWidth / 4, imageHeight / 4, null);
+        graphics.dispose();
+        
+        return zoomedOutImage;
     }
 
-    public static BufferedImage blur(BufferedImage src) {
-        float weight = 1.0f / 9.0f;
-        float[] data = new float[9];
-        for (int i = 0; i < 9; i++) {
-            data[i] = weight;
+    public static BufferedImage rotate(BufferedImage sourceImage) {
+        int imageWidth = sourceImage.getWidth();
+        int imageHeight = sourceImage.getHeight();
+        
+        // Dao nguoc chieu dai va chieu rong cho khung hinh moi
+        BufferedImage rotatedImage = new BufferedImage(imageHeight, imageWidth, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D graphics = rotatedImage.createGraphics();
+        
+        graphics.translate(imageHeight, 0); 
+        graphics.rotate(Math.PI / 2); 
+        graphics.drawImage(sourceImage, 0, 0, null);
+        graphics.dispose();
+        
+        return rotatedImage;
+    }
+
+    // Blur: Lam mo anh bang ma tran tich chap (Convolution Matrix) 5x5
+    public static BufferedImage blur(BufferedImage sourceImage) {
+        int matrixSize = 25; // 5x5
+        float blurWeight = 1.0f / matrixSize;
+        float[] blurData = new float[matrixSize];
+        
+        for (int i = 0; i < matrixSize; i++) {
+            blurData[i] = blurWeight;
         }
-        Kernel kernel = new Kernel(3, 3, data);
-        ConvolveOp op = new ConvolveOp(kernel, ConvolveOp.EDGE_NO_OP, null);
-
-        BufferedImage dest = new BufferedImage(src.getWidth(), src.getHeight(), BufferedImage.TYPE_INT_ARGB);
-        Graphics2D g = dest.createGraphics();
-        g.drawImage(src, 0, 0, null);
-        g.dispose();
-
-        return op.filter(dest, null);
+        
+        Kernel blurKernel = new Kernel(5, 5, blurData);
+        ConvolveOp blurOperation = new ConvolveOp(blurKernel, ConvolveOp.EDGE_NO_OP, null);
+        
+        BufferedImage tempImage = new BufferedImage(sourceImage.getWidth(), sourceImage.getHeight(), BufferedImage.TYPE_INT_RGB);
+        Graphics2D graphics = tempImage.createGraphics();
+        graphics.drawImage(sourceImage, 0, 0, null);
+        graphics.dispose();
+        
+        return blurOperation.filter(tempImage, null);
     }
 
     // =====================================================================
-    // 3 TÍNH NĂNG NÂNG CAO MỚI THÊM
+    // DAN THUAT TOAN XU LY ANH NANG CAO (TON CPU)
     // =====================================================================
 
-    // 8. Color Splash (Giữ lại tone Đỏ/Hồng)
-    public static BufferedImage colorSplash(BufferedImage src) {
-        BufferedImage dst = new BufferedImage(src.getWidth(), src.getHeight(), BufferedImage.TYPE_INT_ARGB);
-        for (int y = 0; y < src.getHeight(); y++) {
-            for (int x = 0; x < src.getWidth(); x++) {
-                int rgb = src.getRGB(x, y);
-                Color c = new Color(rgb);
+    public static BufferedImage colorSplash(BufferedImage sourceImage) {
+        int imageWidth = sourceImage.getWidth();
+        int imageHeight = sourceImage.getHeight();
+        BufferedImage splashImage = new BufferedImage(imageWidth, imageHeight, BufferedImage.TYPE_INT_ARGB);
+        
+        for (int y = 0; y < imageHeight; y++) {
+            for (int x = 0; x < imageWidth; x++) {
+                int currentPixel = sourceImage.getRGB(x, y);
+                Color pixelColor = new Color(currentPixel);
+                float[] hueSatBright = Color.RGBtoHSB(pixelColor.getRed(), pixelColor.getGreen(), pixelColor.getBlue(), null);
                 
-                float[] hsb = Color.RGBtoHSB(c.getRed(), c.getGreen(), c.getBlue(), null);
-                
-                if (hsb[0] < 0.08f || hsb[0] > 0.92f) {
-                    dst.setRGB(x, y, rgb); 
+                // Giu lai mau do (Hue nam o hai dau quang pho)
+                if (hueSatBright[0] < 0.08f || hueSatBright[0] > 0.92f) {
+                    splashImage.setRGB(x, y, currentPixel); 
                 } else {
-                    int gray = (int) (0.299 * c.getRed() + 0.587 * c.getGreen() + 0.114 * c.getBlue());
-                    dst.setRGB(x, y, new Color(gray, gray, gray).getRGB());
+                    // Cac mau khac chuyen thanh trang den (Grayscale)
+                    int grayValue = (int) (0.299 * pixelColor.getRed() + 0.587 * pixelColor.getGreen() + 0.114 * pixelColor.getBlue());
+                    splashImage.setRGB(x, y, new Color(grayValue, grayValue, grayValue).getRGB());
                 }
             }
         }
-        return dst;
+        return splashImage;
     }
 
-    // 9. Hiệu ứng Phim cũ (Sepia)
-    public static BufferedImage sepia(BufferedImage src) {
-        BufferedImage dst = new BufferedImage(src.getWidth(), src.getHeight(), BufferedImage.TYPE_INT_ARGB);
-        for (int y = 0; y < src.getHeight(); y++) {
-            for (int x = 0; x < src.getWidth(); x++) {
-                Color c = new Color(src.getRGB(x, y));
-                int r = c.getRed();
-                int g = c.getGreen();
-                int b = c.getBlue();
-
-                int tr = (int) (0.393 * r + 0.769 * g + 0.189 * b);
-                int tg = (int) (0.349 * r + 0.686 * g + 0.168 * b);
-                int tb = (int) (0.272 * r + 0.534 * g + 0.131 * b);
-
-                r = Math.min(255, tr);
-                g = Math.min(255, tg);
-                b = Math.min(255, tb);
-
-                dst.setRGB(x, y, new Color(r, g, b).getRGB());
-            }
-        }
-        return dst;
-    }
-
-    // 10. Hiệu ứng Tranh vẽ phác thảo (Pencil Sketch)
-    public static BufferedImage pencilSketch(BufferedImage src) {
-        int w = src.getWidth();
-        int h = src.getHeight();
-        BufferedImage dst = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
-
-        for (int y = 0; y < h - 1; y++) {
-            for (int x = 0; x < w - 1; x++) {
-                int p1 = src.getRGB(x, y);
-                int p2 = src.getRGB(x + 1, y + 1); 
-
-                int lum1 = (((p1 >> 16) & 0xFF) * 77 + ((p1 >> 8) & 0xFF) * 150 + (p1 & 0xFF) * 29) >> 8;
-                int lum2 = (((p2 >> 16) & 0xFF) * 77 + ((p2 >> 8) & 0xFF) * 150 + (p2 & 0xFF) * 29) >> 8;
-
-                int diff = Math.abs(lum1 - lum2);
-                int val = 255 - Math.min(255, diff * 6); 
+    public static BufferedImage sepia(BufferedImage sourceImage) {
+        int imageWidth = sourceImage.getWidth();
+        int imageHeight = sourceImage.getHeight();
+        BufferedImage sepiaImage = new BufferedImage(imageWidth, imageHeight, BufferedImage.TYPE_INT_ARGB);
+        
+        for (int y = 0; y < imageHeight; y++) {
+            for (int x = 0; x < imageWidth; x++) {
+                Color pixelColor = new Color(sourceImage.getRGB(x, y));
+                int currentRed = pixelColor.getRed();
+                int currentGreen = pixelColor.getGreen();
+                int currentBlue = pixelColor.getBlue();
                 
-                dst.setRGB(x, y, (255 << 24) | (val << 16) | (val << 8) | val);
+                // Cong thuc tinh mau Sepia co dien
+                int targetRed = (int) (0.393 * currentRed + 0.769 * currentGreen + 0.189 * currentBlue);
+                int targetGreen = (int) (0.349 * currentRed + 0.686 * currentGreen + 0.168 * currentBlue);
+                int targetBlue = (int) (0.272 * currentRed + 0.534 * currentGreen + 0.131 * currentBlue);
+                
+                // Dam bao gia tri khong vuot qua 255
+                sepiaImage.setRGB(x, y, new Color(Math.min(255, targetRed), Math.min(255, targetGreen), Math.min(255, targetBlue)).getRGB());
             }
         }
-        return dst;
+        return sepiaImage;
     }
 
-    // =====================================================================
-
-    // Convenience: process by name
-    public static BufferedImage process(BufferedImage src, String operation) {
-        switch (operation.toLowerCase()) {
-            case "grayscale":
-            case "gray":
-                return toGrayscale(src);
-            case "invert":
-                return invertColors(src);
-            default:
-                return src;
+    // Pencil Sketch: Thuat toan tim bien (Edge Detection) dua tren do sang
+    public static BufferedImage pencilSketch(BufferedImage sourceImage) {
+        int imageWidth = sourceImage.getWidth();
+        int imageHeight = sourceImage.getHeight();
+        BufferedImage sketchImage = new BufferedImage(imageWidth, imageHeight, BufferedImage.TYPE_INT_ARGB);
+        
+        for (int y = 0; y < imageHeight - 1; y++) {
+            for (int x = 0; x < imageWidth - 1; x++) {
+                int pixel1 = sourceImage.getRGB(x, y);
+                int pixel2 = sourceImage.getRGB(x + 1, y + 1); 
+                
+                // Tinh do sang (Luminance) cua 2 pixel ke tiep nhau
+                int luminance1 = (((pixel1 >> 16) & 0xFF) * 77 + ((pixel1 >> 8) & 0xFF) * 150 + (pixel1 & 0xFF) * 29) >> 8;
+                int luminance2 = (((pixel2 >> 16) & 0xFF) * 77 + ((pixel2 >> 8) & 0xFF) * 150 + (pixel2 & 0xFF) * 29) >> 8;
+                
+                // Tinh do lech sang de ve net but chi
+                int colorValue = 255 - Math.min(255, Math.abs(luminance1 - luminance2) * 6); 
+                sketchImage.setRGB(x, y, (255 << 24) | (colorValue << 16) | (colorValue << 8) | colorValue);
+            }
         }
-    }
-
-    // Quick CLI demo
-    public static void main(String[] args) {
-        File inDir = new File("test_images/input");
-        File outDir = new File("test_images/output");
-        outDir.mkdirs();
-        File[] files = inDir.listFiles((d, name) -> {
-            String l = name.toLowerCase();
-            return l.endsWith(".jpg") || l.endsWith(".jpeg") || l.endsWith(".png") || l.endsWith(".bmp");
-        });
-        if (files == null || files.length == 0) {
-            System.out.println("No input images found in test_images/input");
-            return;
-        }
-        File src = files[0];
-        System.out.println("Processing: " + src.getName());
-        try {
-            BufferedImage img = ImageIO.read(src);
-            
-            // Test thử 3 tính năng mới ngay tại đây
-            BufferedImage splash = colorSplash(img);
-            BufferedImage vintage = sepia(img);
-            BufferedImage sketch = pencilSketch(img);
-
-            ImageIO.write(splash, "png", new File(outDir, "splash_" + src.getName() + ".png"));
-            ImageIO.write(vintage, "png", new File(outDir, "vintage_" + src.getName() + ".png"));
-            ImageIO.write(sketch, "png", new File(outDir, "sketch_" + src.getName() + ".png"));
-
-            System.out.println("Wrote outputs to test_images/output. Hãy mở ra xem độ WOW nhé!");
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
+        return sketchImage;
     }
 }

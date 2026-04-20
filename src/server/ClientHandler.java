@@ -1,99 +1,136 @@
 package server;
 
-import core.LogWindow;
 import core.ImageProcessor;
+import share.Constants;
+
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.net.Socket;
 
 public class ClientHandler implements Runnable {
-    private final Socket socket;
+    private final Socket clientSocket;
 
     public ClientHandler(Socket socket) {
-        this.socket = socket;
+        this.clientSocket = socket;
     }
 
     @Override
     public void run() {
-        try (DataInputStream dis = new DataInputStream(socket.getInputStream());
-             DataOutputStream dos = new DataOutputStream(socket.getOutputStream())) {
+        // Su dung try-with-resources de tu dong dong luong (Stream) khi hoan tat hoac co loi
+        try (DataInputStream dataInStream = new DataInputStream(clientSocket.getInputStream());
+             DataOutputStream dataOutStream = new DataOutputStream(clientSocket.getOutputStream())) {
 
             // ==========================================================
-            // 1. ĐỌC VÀ CẮT CHUỖI HEADER
+            // 1. DOC VA BOC TACH CHUOI HEADER
             // ==========================================================
-            // Android sẽ gửi chuỗi Header bằng phương thức writeUTF()
-            String headerString = dis.readUTF(); 
-            LogWindow.log("Đã nhận Packet Header: " + headerString);
+            // Client se gui chuoi Header thong qua phuong thuc writeUTF()
+            String headerMessage = dataInStream.readUTF(); 
+            ServerUI.log("Da nhan Packet Header: " + headerMessage);
 
-            // Cắt chuỗi theo dấu hai chấm ":"
-            String[] parts = headerString.split(":");
-            if (parts.length < 4 || !parts[0].equals("HEADER")) {
-                throw new Exception("Sai định dạng Header. Đã ngắt kết nối!");
+            // Phan tich chuoi theo cu phap chuan: "HEADER:userId:commandCode:imageSize"
+            String[] headerParts = headerMessage.split(":");
+            if (headerParts.length < 4 || !headerParts[0].equals("HEADER")) {
+                throw new Exception("Sai dinh dang Header. Da ngat ket noi!");
             }
 
-            // Bóc tách thông tin từ mảng đã cắt
-            String userId = parts[1];
-            int commandCode = Integer.parseInt(parts[2]);
-            int L = Integer.parseInt(parts[3]); // Đây chính là kích thước ảnh (Size)
+            // Trich xuat cac thong so quan trong
+            String userId = headerParts[1];
+            int commandCode = Integer.parseInt(headerParts[2]);
+            int imageSize = Integer.parseInt(headerParts[3]); 
 
             // ==========================================================
-            // 2. ĐỌC DỮ LIỆU ẢNH TỪ CLIENT
+            // 2. NHAN DU LIEU ANH TU CLIENT (READ BYTES)
             // ==========================================================
-            byte[] buffer = new byte[L];
+            byte[] originalImageData = new byte[imageSize];
             int totalBytesRead = 0;
-            while (totalBytesRead < L) {
-                int bytesRead = dis.read(buffer, totalBytesRead, L - totalBytesRead);
+            
+            // Vong lap dam bao doc du 100% dung luong anh moi thoat
+            while (totalBytesRead < imageSize) {
+                int bytesRead = dataInStream.read(originalImageData, totalBytesRead, imageSize - totalBytesRead);
                 if (bytesRead == -1) {
-                    throw new Exception("Mất kết nối giữa chừng khi đang đọc ảnh!");
+                    throw new Exception("Mat ket noi mang giua chung khi dang nhan anh!");
                 }
                 totalBytesRead += bytesRead;
             }
 
             // ==========================================================
-            // 3. CHUYỂN GIAO TOÀN QUYỀN CHO BẾP TRƯỞNG & LƯU LỊCH SỬ
+            // 3. XU LY ANH, LUU FILE VA GHI NHAN LOG DATABASE
             // ==========================================================
-
-            // Lưu ảnh gốc xuống ổ cứng
-            String originalPath = FileManager.saveImageToDisk(buffer, "original", userId + "_goc");
-
-            // Bấm đồng hồ đo thời gian
+            String originalImagePath = FileManager.saveImageToDisk(originalImageData, "original", userId + "_tcp_goc");
             long startTime = System.currentTimeMillis();
 
-            LogWindow.log("Đang chuyển dữ liệu vào Core để xử lý...");
-            byte[] resultData = ImageProcessor.processRequest(commandCode, buffer); 
-
-            // Kiểm tra lỗi ngay lập tức
-            if (resultData == null) {
-                throw new Exception("Core xử lý ảnh thất bại hoặc trả về dữ liệu rỗng.");
+            ServerUI.log("Dang chuyen du lieu vao Core de xu ly...");
+            byte[] processedImageData = null;
+            
+            try {
+                processedImageData = ImageProcessor.processRequest(commandCode, originalImageData); 
+            } catch (Exception e) {
+                ServerUI.log("=> Loi Core TCP: Khong the xu ly anh.");
             }
 
-            // Dừng đồng hồ, tính thời gian xử lý
-            long processTime = System.currentTimeMillis() - startTime;
-
-            // Lưu ảnh kết quả xuống ổ cứng
-            String resultPath = FileManager.saveImageToDisk(resultData, "result", userId + "_xong");
-
-            // Ghi nhật ký vào Database
-            boolean dbSuccess = HistoryDAO.saveRecord(userId, commandCode, "TCP", processTime, originalPath, resultPath);
-            if (dbSuccess) {
-                LogWindow.log("=> Đã lưu lịch sử vào Database thành công.");
+            // CO CHE BAO VE: Neu bep truong tu choi xu ly (tra ve null), lay luon anh goc tra ve 
+            // de dam bao App Android khong bi crash vi thieu du lieu
+            if (processedImageData == null) {
+                ServerUI.log("=> Canh bao TCP: Anh loi dinh dang. Tra nguyen ban goc ve cho Client!");
+                processedImageData = originalImageData; 
             }
 
-            // ==========================================================
-            // 4. GỬI KẾT QUẢ VỀ LẠI CHO CLIENT
-            // ==========================================================
-            dos.writeInt(resultData.length);
-            dos.write(resultData);
-            dos.flush();
-            LogWindow.log("Đã xử lý xong và gửi trả Client " + resultData.length + " bytes.");
+            long processingDuration = System.currentTimeMillis() - startTime;
+            String resultImagePath = FileManager.saveImageToDisk(processedImageData, "result", userId + "_tcp_xong");
 
+            // Luu lich su vao co so du lieu (SQLite)
+            boolean isSavedToDb = HistoryDAO.saveRecord(userId, commandCode, "TCP", processingDuration, originalImagePath, resultImagePath);
+            if (isSavedToDb) {
+                ServerUI.log("=> Da luu lich su TCP vao Database thanh cong.");
+            }
+            ServerUI.updateImages(originalImageData, processedImageData);            
+            
+            // ==========================================================
+            // 4. TRUYEN KET QUA VE CLIENT (CO MO PHONG DO TRE MANG)
+            // ==========================================================
+            // Buoc tu lenh: Gui kich thuoc file tra ve truoc de Client chuan bi bo nho RAM
+            dataOutStream.writeInt(processedImageData.length);
+            
+            // Bam nho du lieu de truyen y het nhu co che UDP
+            int maxChunkSize = Constants.UDP_CHUNK_SIZE; 
+            int currentOffset = 0;
+            int retransmissionCount = 0; 
+            int currentPenaltyMs = 200; // An phat thoi gian bat dau tu 200ms
+
+            while (currentOffset < processedImageData.length) {
+                int sendLength = Math.min(maxChunkSize, processedImageData.length - currentOffset);
+                
+                dataOutStream.write(processedImageData, currentOffset, sendLength);
+                dataOutStream.flush(); // Ep day du lieu vao card mang ngay lap tuc
+
+                // LOGIC MO PHONG TCP RTO (Retransmission TimeOut)
+                if (Constants.SIMULATE_DROP_RATE > 0 && Math.random() < Constants.SIMULATE_DROP_RATE) {
+                    retransmissionCount++;
+                    try {
+                        // Dung hinh (Sleep) de mo phong khoang thoi gian TCP cho ACK
+                        Thread.sleep(currentPenaltyMs); 
+                        // TCP Congestion Control: Mang cang ruc rac, an phat thoi gian cang tang
+                        currentPenaltyMs += 100; 
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
+                }
+                currentOffset += sendLength;
+            }
+
+            if (retransmissionCount > 0) {
+                ServerUI.log("=> TCP phat hien rot goi " + retransmissionCount + " lan. RTO tang dan lam cham he thong!");
+            }
+            ServerUI.log("Da xu ly xong va gui tra Client " + processedImageData.length + " bytes.\n");
+            
         } catch (Exception e) {
-            LogWindow.log("Lỗi ở ClientHandler: " + e.getMessage());
+            ServerUI.log("Loi o luong xu ly Client (TCP): " + e.getMessage());
         } finally {
             try {
-                socket.close();
+                // Dam bao Socket luon duoc don dep du co loi hay khong
+                clientSocket.close();
             } catch (Exception e) {
-                // Bỏ qua lỗi đóng socket
+                // Bo qua loi khi dong socket
             }
         }
     }
