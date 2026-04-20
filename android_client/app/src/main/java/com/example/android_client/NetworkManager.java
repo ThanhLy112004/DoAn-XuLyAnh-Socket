@@ -1,6 +1,5 @@
 package com.example.android_client;
 
-import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.util.Log;
@@ -13,7 +12,6 @@ import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.net.Socket;
 import java.net.SocketTimeoutException;
-import java.nio.ByteBuffer;
 import java.util.Locale;
 
 import share.Constants;
@@ -24,159 +22,191 @@ public class NetworkManager {
         void onProgressUpdate(String sentStats, String receivedStats);
     }
 
-    private NetworkCallback callback;
+    private final NetworkCallback callback;
 
     public NetworkManager(NetworkCallback callback) {
         this.callback = callback;
     }
 
+    // Ep dung luong anh tu Android xuong muc an toan truoc khi gui
     public byte[] bitmapToByteArray(Bitmap bitmap) {
         ByteArrayOutputStream stream = new ByteArrayOutputStream();
         bitmap.compress(Bitmap.CompressFormat.JPEG, 80, stream);
         return stream.toByteArray();
     }
 
-    public Bitmap sendViaTCP(String serverIp, String userId, int cmd, byte[] imgData) {
-        try (Socket socket = new Socket(serverIp, Constants.SERVER_PORT_TCP);
-             DataOutputStream dos = new DataOutputStream(socket.getOutputStream());
-             DataInputStream dis = new DataInputStream(socket.getInputStream())) {
+    // =====================================================================
+    // GIAO THUC TCP (An toan nhung cham neu mang yeu)
+    // =====================================================================
+    public Bitmap sendViaTCP(String serverIp, String userId, int commandCode, byte[] imageData) {
+        try (Socket tcpSocket = new Socket(serverIp, Constants.SERVER_PORT_TCP);
+             DataOutputStream dataOut = new DataOutputStream(tcpSocket.getOutputStream());
+             DataInputStream dataIn = new DataInputStream(tcpSocket.getInputStream())) {
 
-            socket.setSoTimeout(15000);
+            // TANG TIMEOUT LEN 30 GIAY: Vi Server v2 co the phat delay RTO len toi 7-10 giay
+            tcpSocket.setSoTimeout(30000); 
             
-            long startSend = System.currentTimeMillis();
-            String headerStr = "HEADER:" + userId + ":" + cmd + ":" + imgData.length;
-            dos.writeUTF(headerStr);
-            dos.write(imgData);
-            dos.flush();
-            long sendTime = System.currentTimeMillis() - startSend;
-            double sendSpeed = (imgData.length / 1024.0) / (sendTime / 1000.0 + 0.001);
+            // 1. GUI DU LIEU CHO SERVER
+            long startSendTime = System.currentTimeMillis();
+            String headerMessage = "HEADER:" + userId + ":" + commandCode + ":" + imageData.length;
+            dataOut.writeUTF(headerMessage);
+            dataOut.write(imageData);
+            dataOut.flush();
+            
+            long sendDuration = System.currentTimeMillis() - startSendTime;
+            double sendSpeedKbps = (imageData.length / 1024.0) / (sendDuration / 1000.0 + 0.001);
             
             if (callback != null) {
                 callback.onProgressUpdate(
-                    String.format(Locale.US, "Gửi: Xong - %dms - %.1f KB/s", sendTime, sendSpeed),
-                    "Đang đợi Server xử lý..."
+                    String.format(Locale.US, "Gui: Xong - %dms - %.1f KB/s", sendDuration, sendSpeedKbps),
+                    "Dang doi Server xu ly (Co the lau do mo phong mang)..."
                 );
             }
 
-            long startRecv = System.currentTimeMillis();
-            int resultLen = dis.readInt();
-            byte[] resultData = new byte[resultLen];
-            dis.readFully(resultData);
-            long recvTime = System.currentTimeMillis() - startRecv;
-            double recvSpeed = (resultLen / 1024.0) / (recvTime / 1000.0 + 0.001);
+            // 2. NHAN KET QUA TU SERVER
+            long startReceiveTime = System.currentTimeMillis();
+            int resultDataLength = dataIn.readInt(); // Doc do dai anh tu Server v2
+            byte[] resultImageData = new byte[resultDataLength];
+            dataIn.readFully(resultImageData); // Doc du 100% data moi dung lai
+            
+            long receiveDuration = System.currentTimeMillis() - startReceiveTime;
+            double receiveSpeedKbps = (resultDataLength / 1024.0) / (receiveDuration / 1000.0 + 0.001);
 
             if (callback != null) {
                 callback.onProgressUpdate(null, 
-                    String.format(Locale.US, "Nhận: Xong - %dms - %.1f KB/s", recvTime, recvSpeed));
+                    String.format(Locale.US, "Nhan: Xong - %dms - %.1f KB/s", receiveDuration, receiveSpeedKbps));
             }
 
-            return BitmapFactory.decodeByteArray(resultData, 0, resultData.length);
-        } catch (Exception e) {
-            Log.e("TCP_CLIENT", "Lỗi TCP: " + e.getMessage());
+            return BitmapFactory.decodeByteArray(resultImageData, 0, resultImageData.length);
+            
+        } catch (Exception exception) {
+            Log.e("TCP_CLIENT", "Loi TCP: " + exception.getMessage());
             return null;
         }
     }
 
-    public Bitmap sendViaUDP(String serverIp, String userId, int cmd, byte[] imgData, int totalChunks) {
-        byte[] resultData = new byte[15 * 1024 * 1024]; 
-        int expectedLen = 0, expectedChunks = 0;
-        int maxPosReached = 0, receivedChunks = 0;
+    // =====================================================================
+    // GIAO THUC UDP (Nhanh, chap nhan rot goi, co co che Datamoshing)
+    // =====================================================================
+    public Bitmap sendViaUDP(String serverIp, String userId, int commandCode, byte[] imageData, int totalChunks) {
+        // TOI UU RAM: Anh tra ve luon duoc Server nen, nen kich thuoc anh goc + 2 byte du phong la an toan 100%
+        byte[] resultImageData = new byte[imageData.length + 1024]; 
+        int expectedImageLength = 0;
+        int expectedTotalChunks = 0;
+        int maxPositionReached = 0;
+        int actualReceivedChunks = 0;
 
-        try (DatagramSocket socket = new DatagramSocket()) {
-            // Tối ưu bộ đệm hệ thống lên mức tối đa
-            socket.setReceiveBufferSize(8 * 1024 * 1024);
-            socket.setSendBufferSize(8 * 1024 * 1024);
+        try (DatagramSocket udpSocket = new DatagramSocket()) {
+            udpSocket.setReceiveBufferSize(5 * 1024 * 1024);
+            udpSocket.setSendBufferSize(5 * 1024 * 1024);
             
-            InetAddress address = InetAddress.getByName(serverIp);
+            InetAddress serverAddress = InetAddress.getByName(serverIp);
 
-            // 1. Gửi Header
-            byte[] hBytes = ("HEADER:" + userId + ":" + cmd + ":" + imgData.length + ":" + totalChunks).getBytes();
-            socket.send(new DatagramPacket(hBytes, hBytes.length, address, Constants.SERVER_PORT_UDP));
+            // 1. GUI HEADER
+            String headerStr = "HEADER:" + userId + ":" + commandCode + ":" + imageData.length + ":" + totalChunks;
+            byte[] headerBytes = headerStr.getBytes();
+            udpSocket.send(new DatagramPacket(headerBytes, headerBytes.length, serverAddress, Constants.SERVER_PORT_UDP));
 
-            // 2. Gửi Ảnh
-            long startSend = System.currentTimeMillis();
-            int offset = 0;
+            // 2. GUI DU LIEU ANH (Cat manh)
+            long startSendTime = System.currentTimeMillis();
+            int currentSendOffset = 0;
+            
             for (int i = 0; i < totalChunks; i++) {
-                int length = Math.min(Constants.UDP_CHUNK_SIZE, imgData.length - offset);
-                byte[] chunk = new byte[length];
-                System.arraycopy(imgData, offset, chunk, 0, length);
-                socket.send(new DatagramPacket(chunk, length, address, Constants.SERVER_PORT_UDP));
-                offset += length;
-                Thread.sleep(1); // Khoảng nghỉ cần thiết để Server không bị sập
+                int sendLength = Math.min(Constants.UDP_CHUNK_SIZE, imageData.length - currentSendOffset);
+                byte[] chunkData = new byte[sendLength];
+                System.arraycopy(imageData, currentSendOffset, chunkData, 0, sendLength);
                 
-                if (callback != null && (i % 100 == 0 || i == totalChunks - 1)) {
-                    callback.onProgressUpdate(String.format(Locale.US, "Đang gửi: %d/%d mảnh...", (i+1), totalChunks), "...");
+                udpSocket.send(new DatagramPacket(chunkData, sendLength, serverAddress, Constants.SERVER_PORT_UDP));
+                currentSendOffset += sendLength;
+                
+                // Ngu 1ms de tranh tran bo dem Server
+                Thread.sleep(1); 
+                
+                if (callback != null && (i % 50 == 0 || i == totalChunks - 1)) {
+                    callback.onProgressUpdate(String.format(Locale.US, "Dang gui: %d/%d manh...", (i+1), totalChunks), "...");
                 }
             }
-            long sendTime = System.currentTimeMillis() - startSend;
-            double sendSpeed = (imgData.length / 1024.0) / (sendTime / 1000.0 + 0.001);
+            
+            long sendDuration = System.currentTimeMillis() - startSendTime;
+            double sendSpeedKbps = (imageData.length / 1024.0) / (sendDuration / 1000.0 + 0.001);
             if (callback != null) {
-                callback.onProgressUpdate(String.format(Locale.US, "Gửi: %d mảnh - %dms - %.1f KB/s", totalChunks, sendTime, sendSpeed), "Đang nhận...");
+                callback.onProgressUpdate(String.format(Locale.US, "Gui: %d manh - %dms - %.1f KB/s", totalChunks, sendDuration, sendSpeedKbps), "Dang lang nghe Server...");
             }
 
-            // 3. Nhận Ảnh
-            long startRecv = System.currentTimeMillis();
-            socket.setSoTimeout(3000); 
+            // 3. NHAN DU LIEU ANH TU SERVER
+            long startReceiveTime = System.currentTimeMillis();
+            udpSocket.setSoTimeout(3000); // Cho toi da 3 giay cho goi tin dau tien
 
-            // Khởi tạo buffer ngoài vòng lặp để tránh Garbage Collector làm chậm máy
-            byte[] receiveBuffer = new byte[Constants.UDP_CHUNK_SIZE + 10];
-            DatagramPacket packet = new DatagramPacket(receiveBuffer, receiveBuffer.length);
+            // Khung don du lieu du chua 16KB + 4 byte Index cua Server V2
+            byte[] receiveBuffer = new byte[Constants.UDP_CHUNK_SIZE + 8];
+            DatagramPacket receivePacket = new DatagramPacket(receiveBuffer, receiveBuffer.length);
 
             try {
                 while (true) {
-                    socket.receive(packet);
-                    socket.setSoTimeout(300); // Sau khi gói đầu đến, chờ 300ms
+                    udpSocket.receive(receivePacket);
+                    udpSocket.setSoTimeout(300); // Sau khi goi dau tien ve, chi cho cac goi sau 300ms
 
-                    int len = packet.getLength();
-                    byte[] data = packet.getData();
+                    int packetLength = receivePacket.getLength();
+                    byte[] packetData = receivePacket.getData();
 
-                    // Kiểm tra nhanh Header RESP
-                    if (len > 5 && data[0] == 'R' && data[1] == 'E' && data[2] == 'S' && data[3] == 'P') {
-                        String fullHdr = new String(data, 0, len);
-                        String[] pts = fullHdr.split(":");
-                        expectedLen = Integer.parseInt(pts[1]);
-                        expectedChunks = Integer.parseInt(pts[2]);
+                    // Kiem tra chuoi Header bao hieu dung luong "RESP:..."
+                    if (packetLength > 5 && packetData[0] == 'R' && packetData[1] == 'E' && packetData[2] == 'S' && packetData[3] == 'P') {
+                        String fullHeader = new String(packetData, 0, packetLength);
+                        String[] headerParts = fullHeader.split(":");
+                        expectedImageLength = Integer.parseInt(headerParts[1]);
+                        expectedTotalChunks = Integer.parseInt(headerParts[2]);
+                        
+                        // Mo rong mang neu anh ket qua bong dung to hon anh goc (Riem khi xay ra)
+                        if (expectedImageLength > resultImageData.length - 2) {
+                            resultImageData = new byte[expectedImageLength + 2];
+                        }
                         continue;
                     }
 
-                    // Xử lý Xếp hình mảnh ảnh
-                    if (len >= 4) {
-                        receivedChunks++;
-                        // Dùng ByteBuffer nhanh để lấy Index
-                        int chunkIndex = ((data[0] & 0xFF) << 24) | ((data[1] & 0xFF) << 16) |
-                                         ((data[2] & 0xFF) << 8) | (data[3] & 0xFF);
+                    // Xu ly lap rap manh anh (Doc 4 bytes dau tien de lay Index)
+                    if (packetLength >= 4) {
+                        actualReceivedChunks++;
                         
-                        int payloadLen = len - 4;
-                        int targetPos = chunkIndex * Constants.UDP_CHUNK_SIZE;
+                        int chunkIndex = ((packetData[0] & 0xFF) << 24) | 
+                                         ((packetData[1] & 0xFF) << 16) |
+                                         ((packetData[2] & 0xFF) << 8)  | 
+                                          (packetData[3] & 0xFF);
+                        
+                        int payloadLength = packetLength - 4;
+                        int targetPosition = chunkIndex * Constants.UDP_CHUNK_SIZE;
 
-                        if (targetPos + payloadLen <= resultData.length - 2) {
-                            System.arraycopy(data, 4, resultData, targetPos, payloadLen);
-                            if (targetPos + payloadLen > maxPosReached) maxPosReached = targetPos + payloadLen;
+                        // Lap rap vao mang chinh neu hop le
+                        if (targetPosition + payloadLength <= resultImageData.length - 2) {
+                            System.arraycopy(packetData, 4, resultImageData, targetPosition, payloadLength);
+                            if (targetPosition + payloadLength > maxPositionReached) {
+                                maxPositionReached = targetPosition + payloadLength;
+                            }
                         }
 
-                        // Giảm tần suất cập nhật UI để không làm nghẽn luồng nhận tin
-                        if (callback != null && (receivedChunks % 50 == 0)) {
-                            callback.onProgressUpdate(null, String.format(Locale.US, "Đang nhận: %d/%d mảnh...", receivedChunks, expectedChunks));
+                        if (callback != null && (actualReceivedChunks % 20 == 0)) {
+                            callback.onProgressUpdate(null, String.format(Locale.US, "Dang nhan: %d/%d manh...", actualReceivedChunks, expectedTotalChunks));
                         }
                     }
                 }
-            } catch (SocketTimeoutException e) {
-                // Trừ khấu hao 300ms cho đúng tốc độ thật
-                long recvDuration = System.currentTimeMillis() - startRecv - 300; 
-                double recvSpeed = (maxPosReached / 1024.0) / (Math.max(1, recvDuration) / 1000.0);
+            } catch (SocketTimeoutException timeoutException) {
+                // Tinh toan toc do khau hao 300ms do cho doi Timeout
+                long receiveDuration = System.currentTimeMillis() - startReceiveTime - 300; 
+                double receiveSpeedKbps = (maxPositionReached / 1024.0) / (Math.max(1, receiveDuration) / 1000.0);
                 if (callback != null) {
-                    callback.onProgressUpdate(null, String.format(Locale.US, "Nhận: %d/%d mảnh - %dms - %.1f KB/s", receivedChunks, expectedChunks, Math.max(0, recvDuration), recvSpeed));
+                    callback.onProgressUpdate(null, String.format(Locale.US, "Nhan: %d/%d manh - %dms - %.1f KB/s", actualReceivedChunks, expectedTotalChunks, Math.max(0, receiveDuration), receiveSpeedKbps));
                 }
             }
 
-            int finalSize = (expectedLen > 0) ? expectedLen : maxPosReached;
-            if (finalSize > 0) {
-                resultData[finalSize] = (byte) 0xFF;
-                resultData[finalSize + 1] = (byte) 0xD9;
-                return BitmapFactory.decodeByteArray(resultData, 0, finalSize + 2);
+            // BUOC CHOT DATAMOSHING: Khoa duoi file bang ma EOI (End of Image) cua JPEG
+            int finalValidSize = (expectedImageLength > 0) ? expectedImageLength : maxPositionReached;
+            if (finalValidSize > 0) {
+                resultImageData[finalValidSize] = (byte) 0xFF;
+                resultImageData[finalValidSize + 1] = (byte) 0xD9;
+                return BitmapFactory.decodeByteArray(resultImageData, 0, finalValidSize + 2);
             }
-        } catch (Exception e) {
-            Log.e("UDP_CLIENT", "Lỗi: " + e.getMessage());
+            
+        } catch (Exception exception) {
+            Log.e("UDP_CLIENT", "Loi UDP: " + exception.getMessage());
         }
         return null;
     }
