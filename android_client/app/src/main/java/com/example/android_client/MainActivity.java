@@ -21,6 +21,7 @@ import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
 
 import java.io.IOException;
+import java.util.Locale;
 
 import share.Constants;
 
@@ -37,10 +38,10 @@ public class MainActivity extends AppCompatActivity implements NetworkManager.Ne
     private Bitmap originalBitmap;
     private NetworkManager networkManager;
 
-    private String[] commands = {
-            "1. Nén ảnh (Compress)", "2. Phóng to (Zoom In)", "3. Thu nhỏ (Zoom Out)", 
-            "4. Xoay ảnh (Rotate)", "5. Đen trắng (Grayscale)", "6. Đảo màu (Invert)", 
-            "7. Làm mờ (Blur)", "8. Color Splash", "9. Phim cũ (Sepia)", "10. Bút chì (Sketch)"
+    private final String[] commandOptions = {
+            "1. Nen anh (Compress)", "2. Phong to (Zoom In)", "3. Thu nho (Zoom Out)", 
+            "4. Xoay anh (Rotate)", "5. Den trang (Grayscale)", "6. Dao mau (Invert)", 
+            "7. Lam mo (Blur)", "8. Color Splash", "9. Phim cu (Sepia)", "10. But chi (Sketch)"
     };
 
     @Override
@@ -48,12 +49,13 @@ public class MainActivity extends AppCompatActivity implements NetworkManager.Ne
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        initViews();
+        initializeViews();
         networkManager = new NetworkManager(this);
 
-        ArrayAdapter<String> adapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, commands);
-        spinnerCommand.setAdapter(adapter);
+        ArrayAdapter<String> spinnerAdapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, commandOptions);
+        spinnerCommand.setAdapter(spinnerAdapter);
 
+        // Bo lang nghe chon anh tu Thu vien (Gallery)
         ActivityResultLauncher<Intent> galleryLauncher = registerForActivityResult(
                 new ActivityResultContracts.StartActivityForResult(),
                 result -> {
@@ -62,12 +64,15 @@ public class MainActivity extends AppCompatActivity implements NetworkManager.Ne
                         try {
                             originalBitmap = MediaStore.Images.Media.getBitmap(this.getContentResolver(), imageUri);
                             btnSend.setEnabled(true);
-                            tvStatus.setText("Trạng thái: Đã chọn ảnh");
-                        } catch (IOException e) { e.printStackTrace(); }
+                            tvStatus.setText("Trang thai: Da chon anh");
+                        } catch (IOException exception) { 
+                            exception.printStackTrace(); 
+                        }
                     }
                 }
         );
 
+        // Bo lang nghe chup anh tu Camera
         ActivityResultLauncher<Intent> captureLauncher = registerForActivityResult(
                 new ActivityResultContracts.StartActivityForResult(),
                 result -> {
@@ -76,7 +81,7 @@ public class MainActivity extends AppCompatActivity implements NetworkManager.Ne
                         if (extras != null) {
                             originalBitmap = (Bitmap) extras.get("data");
                             btnSend.setEnabled(true);
-                            tvStatus.setText("Trạng thái: Đã chụp ảnh");
+                            tvStatus.setText("Trang thai: Da chup anh");
                         }
                     }
                 }
@@ -84,10 +89,10 @@ public class MainActivity extends AppCompatActivity implements NetworkManager.Ne
 
         btnGallery.setOnClickListener(v -> galleryLauncher.launch(new Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI)));
         btnCapture.setOnClickListener(v -> captureLauncher.launch(new Intent(MediaStore.ACTION_IMAGE_CAPTURE)));
-        btnSend.setOnClickListener(v -> sendImageToServer());
+        btnSend.setOnClickListener(v -> executeImageProcessing());
     }
 
-    private void initViews() {
+    private void initializeViews() {
         edtUserId = findViewById(R.id.edtUserId);
         edtIpServer = findViewById(R.id.edtIpServer);
         rgProtocol = findViewById(R.id.rgProtocol);
@@ -111,51 +116,58 @@ public class MainActivity extends AppCompatActivity implements NetworkManager.Ne
         });
     }
 
-    private void sendImageToServer() {
+    private void executeImageProcessing() {
         String userId = edtUserId.getText().toString().trim();
         String serverIp = edtIpServer.getText().toString().trim();
+        
         if (userId.isEmpty() || serverIp.isEmpty()) {
-            Toast.makeText(this, "Vui lòng nhập đủ UserID và IP Server", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "Vui long nhap UserID va IP Server", Toast.LENGTH_SHORT).show();
             return;
         }
 
-        int cmd = spinnerCommand.getSelectedItemPosition() + 1;
-        boolean isTcp = rgProtocol.getCheckedRadioButtonId() == R.id.rbTcp;
+        int commandCode = spinnerCommand.getSelectedItemPosition() + 1;
+        boolean isTcpProtocol = rgProtocol.getCheckedRadioButtonId() == R.id.rbTcp;
 
+        // Cap nhat Giao dien truoc khi vao luong xu ly nang
         progressBar.setVisibility(View.VISIBLE);
         btnSend.setEnabled(false);
-        tvStatus.setText("Đang xử lý...");
-        tvSentStats.setText("Đang chuẩn bị...");
+        tvStatus.setText("He thong dang xu ly...");
+        tvSentStats.setText("Dang chuan bi du lieu...");
         tvReceivedStats.setText("...");
 
+        // Mo luong (Thread) moi de khong lam dung UI cua Android
         new Thread(() -> {
-            long startTime = System.currentTimeMillis();
-            byte[] imgData = networkManager.bitmapToByteArray(originalBitmap);
-            Bitmap result;
+            long startTimeMs = System.currentTimeMillis();
+            byte[] imagePayload = networkManager.bitmapToByteArray(originalBitmap);
+            Bitmap processedBitmap;
 
-            if (isTcp) {
-                result = networkManager.sendViaTCP(serverIp, userId, cmd, imgData);
+            if (isTcpProtocol) {
+                processedBitmap = networkManager.sendViaTCP(serverIp, userId, commandCode, imagePayload);
             } else {
-                int totalChunks = (int) Math.ceil((double)imgData.length / Constants.UDP_CHUNK_SIZE);
-                result = networkManager.sendViaUDP(serverIp, userId, cmd, imgData, totalChunks);
+                int totalChunks = (int) Math.ceil((double) imagePayload.length / Constants.UDP_CHUNK_SIZE);
+                processedBitmap = networkManager.sendViaUDP(serverIp, userId, commandCode, imagePayload, totalChunks);
             }
 
-            // Trừ khấu hao 300ms nếu dùng UDP để hiện tốc độ thực tế
-            long timeTaken = System.currentTimeMillis() - startTime;
-            if (!isTcp) {
-                timeTaken = Math.max(0, timeTaken - 300);
+            // Tru khau hao 300ms doi Timeout cua UDP de tinh thoi gian that
+            long totalProcessingTimeMs = System.currentTimeMillis() - startTimeMs;
+            if (!isTcpProtocol) {
+                totalProcessingTimeMs = Math.max(0, totalProcessingTimeMs - 300);
             }
 
-            final long finalTimeTaken = timeTaken;
+            final long finalTimeTaken = totalProcessingTimeMs;
+            
+            // Quay lai luong chinh de cap nhat hinh anh len man hinh
             runOnUiThread(() -> {
                 progressBar.setVisibility(View.GONE);
                 btnSend.setEnabled(true);
-                tvTime.setText("Tổng thời gian: " + finalTimeTaken + " ms");
-                if (result != null) {
-                    imgResult.setImageBitmap(result);
-                    tvStatus.setText("Trạng thái: Hoàn tất");
+                tvTime.setText(String.format(Locale.US, "Tong thoi gian: %d ms", finalTimeTaken));
+                
+                if (processedBitmap != null) {
+                    imgResult.setImageBitmap(processedBitmap);
+                    tvStatus.setText("Trang thai: Xu ly hoan tat!");
                 } else {
-                    tvStatus.setText("Trạng thái: Thất bại");
+                    tvStatus.setText("Trang thai: Giao dich that bai!");
+                    Toast.makeText(MainActivity.this, "Khong the ket noi hoac anh qua loi!", Toast.LENGTH_LONG).show();
                 }
             });
         }).start();
