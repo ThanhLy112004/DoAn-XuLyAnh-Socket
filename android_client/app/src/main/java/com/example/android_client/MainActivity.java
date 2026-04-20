@@ -63,6 +63,7 @@ public class MainActivity extends AppCompatActivity implements NetworkManager.Ne
                         Uri imageUri = result.getData().getData();
                         try {
                             originalBitmap = MediaStore.Images.Media.getBitmap(this.getContentResolver(), imageUri);
+                            imgResult.setImageBitmap(originalBitmap);
                             btnSend.setEnabled(true);
                             tvStatus.setText("Trang thai: Da chon anh");
                         } catch (IOException exception) { 
