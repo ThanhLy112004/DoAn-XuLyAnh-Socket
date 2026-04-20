@@ -1,0 +1,29 @@
+R_DEF: Internal format may change without notice
+local
+color black
+color white
+drawable ic_launcher_background
+drawable ic_launcher_foreground
+id btnCapture
+id btnGallery
+id btnSend
+id edtIpServer
+id edtUserId
+id imgResult
+id progressBar
+id rbTcp
+id rbUdp
+id rgProtocol
+id spinnerCommand
+id tvReceivedStats
+id tvSentStats
+id tvStatus
+id tvTime
+layout activity_main
+mipmap ic_launcher
+mipmap ic_launcher_round
+string app_name
+style Base.Theme.Android_client
+style Theme.Android_client
+xml backup_rules
+xml data_extraction_rules

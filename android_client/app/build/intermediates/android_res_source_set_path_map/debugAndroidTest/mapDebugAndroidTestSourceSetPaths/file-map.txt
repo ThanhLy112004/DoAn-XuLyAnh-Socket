@@ -1,0 +1,4 @@
+com.example.android_client.test.app-updated_navigation_xml-0 D:\Nam4\ki2\laptrinhmang\android_client\app\build\generated\updated_navigation_xml\debugAndroidTest
+com.example.android_client.test.app-packageDebugAndroidTestResources-1 D:\Nam4\ki2\laptrinhmang\android_client\app\build\intermediates\incremental\debugAndroidTest\packageDebugAndroidTestResources\merged.dir
+com.example.android_client.test.app-packageDebugAndroidTestResources-2 D:\Nam4\ki2\laptrinhmang\android_client\app\build\intermediates\incremental\debugAndroidTest\packageDebugAndroidTestResources\stripped.dir
+com.example.android_client.test.app-debugAndroidTest-3 D:\Nam4\ki2\laptrinhmang\android_client\app\build\intermediates\merged_res\debugAndroidTest\mergeDebugAndroidTestResources
