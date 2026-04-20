@@ -145,8 +145,10 @@ public class UdpImageServer {
                         
                         currentSendOffset += chunkDataLength;
                         
-                        // 4. FLOW CONTROL: Ngu 1ms de tranh tinh trang card mang cua Android bi ngop
-                        Thread.sleep(1); 
+                        // 4. FLOW CONTROL TOI UU: Chi ngu 1ms sau moi 10 goi tin de chong delay cua Windows
+                        if (chunkIndex % 15 == 0) {
+                            Thread.sleep(1); 
+                        }
                     }
                     
                     if (simulatedDroppedCount > 0) {
