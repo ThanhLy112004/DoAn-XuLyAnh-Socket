@@ -81,6 +81,7 @@ public class MainActivity extends AppCompatActivity implements NetworkManager.Ne
                         Bundle extras = result.getData().getExtras();
                         if (extras != null) {
                             originalBitmap = (Bitmap) extras.get("data");
+                            imgResult.setImageBitmap(originalBitmap);
                             btnSend.setEnabled(true);
                             tvStatus.setText("Trang thai: Da chup anh");
                         }
